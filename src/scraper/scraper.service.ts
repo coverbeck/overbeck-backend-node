@@ -1,8 +1,8 @@
 const cheerio = require('cheerio');
-import {HttpService, Injectable} from '@nestjs/common';
-import {AxiosResponse} from 'axios';
-import {Observable} from "rxjs";
-import {map, mergeMap} from "rxjs/operators";
+import { HttpService, Injectable } from '@nestjs/common';
+import { AxiosResponse } from 'axios';
+import { Observable } from 'rxjs';
+import { map, mergeMap } from 'rxjs/operators';
 
 const BASE_URL = 'https://www.gocomics.com';
 const COMICS_MAP: { [key: string]: string} = {

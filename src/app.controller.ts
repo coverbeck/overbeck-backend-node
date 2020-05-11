@@ -18,7 +18,9 @@ export class AppController {
                 response.set('Content-Disposition', resp.headers['content-disposition']);
                 response.set('Content-Transfer-Encoding', resp.headers['content-transfer-encoding']);
                 response.send(resp.data);
-            })
+            },
+                error => response.status(500).send()
+            );
     }
 
     @Get("covid")
