@@ -2,7 +2,7 @@ import {Controller, Get, Query, Res} from '@nestjs/common';
 import {CovidService} from "./covid/covid.service";
 import {ScraperService} from "./scraper/scraper.service";
 
-@Controller("api")
+@Controller()
 export class AppController {
     constructor(private readonly scraperService: ScraperService, private covidService: CovidService) {}
 
