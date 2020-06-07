@@ -1,5 +1,6 @@
 import {HttpModule} from "@nestjs/common";
 import { Test, TestingModule } from '@nestjs/testing';
+import { CsvModule } from 'nest-csv-parser';
 import { CovidService } from './covid.service';
 
 describe('CovidService', () => {
@@ -7,7 +8,7 @@ describe('CovidService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      imports: [HttpModule],
+      imports: [HttpModule, CsvModule],
       providers: [CovidService],
     }).compile();
 

@@ -1,8 +1,11 @@
-import {Injectable} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  getHello(): string {
-    return 'Hello World!';
+  private readonly APIKEY = process.env.APIKEY;
+
+  authorize(apikey: string | null): boolean {
+    return this.APIKEY === apikey;
   }
+
 }

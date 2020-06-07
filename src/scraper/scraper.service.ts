@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const cheerio = require('cheerio');
 import { HttpService, Injectable } from '@nestjs/common';
 import { AxiosResponse } from 'axios';

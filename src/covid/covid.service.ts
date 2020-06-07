@@ -6,8 +6,8 @@ import {Readable} from "stream";
 import { BrainDeadCache } from '../BrainDeadCache';
 
 class CovidRow {
-  "County Name": string = "";
-  "Most Recent Date": string = "";
+  "County Name" = "";
+  "Most Recent Date" = "";
   "Total Count Confirmed": string;
   "Total Count Deaths": string;
   "COVID-19 Positive Patients": string;
