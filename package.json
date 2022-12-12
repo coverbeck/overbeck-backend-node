@@ -23,7 +23,7 @@
   "dependencies": {
     "@nestjs/common": "^7.0.0",
     "@nestjs/core": "^7.0.0",
-    "@nestjs/platform-express": "^7.0.0",
+    "@nestjs/platform-express": "^9.2.1",
     "cheerio": "^1.0.0-rc.3",
     "cheerio-req": "^1.2.3",
     "compression": "^1.7.4",
