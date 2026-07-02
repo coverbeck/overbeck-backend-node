@@ -1,6 +1,8 @@
 import express from 'express';
 import type { Router, Request, Response } from 'express';
 import db from '../db/index.ts';
+import { getCurrentWeather } from '../weather.ts';
+import type { WeatherReading } from '../weather.ts';
 
 const router: Router = express.Router();
 
@@ -13,12 +15,22 @@ interface LochLomondRow {
   percent_full: number;
 }
 
-router.get('/lochlomond', (req: Request, res: Response) => {
+router.get('/weather', async (req: Request, res: Response) => {
   const readings = db.prepare(
     'SELECT recording_date, percent_full FROM loch_lomond ORDER BY recording_date'
   ).all() as LochLomondRow[];
 
-  res.render('lochlomond.njk', {
+  let weather: WeatherReading | null = null;
+  let weatherError: string | null = null;
+  try {
+    weather = await getCurrentWeather();
+  } catch (err) {
+    weatherError = err instanceof Error ? err.message : 'Unknown error fetching weather';
+  }
+
+  res.render('weather.njk', {
+    weather,
+    weatherError,
     labels: readings.map((r) => r.recording_date),
     values: readings.map((r) => r.percent_full),
     lastChecked: readings.length ? readings[readings.length - 1].recording_date : null,

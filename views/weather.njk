@@ -1,9 +1,28 @@
 {% extends "layouts/base.njk" %}
 
-{% block title %}Loch Lomond Reservoir{% endblock %}
+{% block title %}Weather{% endblock %}
 
 {% block content %}
-<h1>Loch Lomond Reservoir Level</h1>
+<h1>My Weather</h1>
+<p>
+  I have an <a href="https://ambientweather.com/amws2902.html">Ambient Weather Station</a>.
+  Here are its readings:
+</p>
+
+{% if weather %}
+<p>
+  Outdoor temperature (F): {{ weather.outdoorTemp }}<br>
+  Indoor temperature (F): {{ weather.indoorTemp }}<br>
+  Windspeed (MPH): {{ weather.windSpeedMph }}<br>
+  Wind direction (degrees from which the wind is blowing): {{ weather.windDirection }}&deg;<br>
+  Daily rain: {{ weather.dailyRain }}<br>
+  Reading time: {{ weather.date }}
+</p>
+{% else %}
+<p>Weather station data is currently unavailable ({{ weatherError }}).</p>
+{% endif %}
+
+<h2>Loch Lomond Reservoir Level</h2>
 <div style="max-width: 700px">
   <canvas id="lochlomond-chart"></canvas>
 </div>
