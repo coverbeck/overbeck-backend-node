@@ -1,5 +1,8 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const db = new Database(path.join(__dirname, '..', 'overbeck.db'));
 db.pragma('journal_mode = WAL');
@@ -13,4 +16,4 @@ db.exec(`
   )
 `);
 
-module.exports = db;
+export default db;

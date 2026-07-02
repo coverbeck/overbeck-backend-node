@@ -1,6 +1,10 @@
-const express = require('express');
-const nunjucks = require('nunjucks');
-const path = require('path');
+import express from 'express';
+import nunjucks from 'nunjucks';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import indexRouter from './routes/index.ts';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,7 +20,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-app.use('/', require('./routes/index'));
+app.use('/', indexRouter);
 
 app.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
