@@ -5,8 +5,8 @@
   "type": "module",
   "main": "app.ts",
   "scripts": {
-    "start": "node app.ts",
-    "dev": "node --watch app.ts",
+    "start": "node --env-file-if-exists=.env app.ts",
+    "dev": "node --watch --env-file-if-exists=.env app.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
