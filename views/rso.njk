@@ -1,0 +1,12 @@
+{% extends "layouts/base.njk" %}
+
+{% block title %}My Father{% endblock %}
+
+{% block content %}
+<div class="rso">
+  {% if showImage %}
+  <img src="/images/rso_army.png" alt="">
+  {% endif %}
+  {{ contentHtml | safe }}
+</div>
+{% endblock %}
