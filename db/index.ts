@@ -12,8 +12,20 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recording_date TEXT NOT NULL UNIQUE,
     percent_full REAL NOT NULL,
+    water_level REAL,
+    daily_production REAL,
     created_timestamp TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
+
+const lochLomondColumns = new Set(
+  (db.prepare('PRAGMA table_info(loch_lomond)').all() as { name: string }[]).map((c) => c.name)
+);
+if (!lochLomondColumns.has('water_level')) {
+  db.exec('ALTER TABLE loch_lomond ADD COLUMN water_level REAL');
+}
+if (!lochLomondColumns.has('daily_production')) {
+  db.exec('ALTER TABLE loch_lomond ADD COLUMN daily_production REAL');
+}
 
 export default db;

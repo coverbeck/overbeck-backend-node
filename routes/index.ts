@@ -85,11 +85,11 @@ router.get('/rso/:page', (req: Request, res: Response) => {
 const RECORDING_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const insertLochLomondReading = db.prepare(
-  'INSERT OR IGNORE INTO loch_lomond (recording_date, percent_full) VALUES (?, ?)'
+  'INSERT OR IGNORE INTO loch_lomond (recording_date, percent_full, water_level, daily_production) VALUES (?, ?, ?, ?)'
 );
 
 router.post('/api/loch-lomond', requireAuth, (req: Request, res: Response) => {
-  const { recordingDate, percentFull } = req.body ?? {};
+  const { recordingDate, percentFull, waterLevel, dailyProduction } = req.body ?? {};
 
   if (typeof recordingDate !== 'string' || !RECORDING_DATE_PATTERN.test(recordingDate)) {
     res.status(400).json({ error: 'recordingDate must be a string in YYYY-MM-DD format' });
@@ -99,15 +99,31 @@ router.post('/api/loch-lomond', requireAuth, (req: Request, res: Response) => {
     res.status(400).json({ error: 'percentFull must be a finite number' });
     return;
   }
-
-  const result = insertLochLomondReading.run(recordingDate, percentFull);
-
-  if (result.changes === 0) {
-    res.status(200).json({ duplicate: true, recordingDate, percentFull });
+  if (waterLevel !== undefined && (typeof waterLevel !== 'number' || !Number.isFinite(waterLevel))) {
+    res.status(400).json({ error: 'waterLevel must be a finite number if provided' });
+    return;
+  }
+  if (
+    dailyProduction !== undefined &&
+    (typeof dailyProduction !== 'number' || !Number.isFinite(dailyProduction))
+  ) {
+    res.status(400).json({ error: 'dailyProduction must be a finite number if provided' });
     return;
   }
 
-  res.status(201).json({ duplicate: false, recordingDate, percentFull });
+  const result = insertLochLomondReading.run(
+    recordingDate,
+    percentFull,
+    waterLevel ?? null,
+    dailyProduction ?? null
+  );
+
+  if (result.changes === 0) {
+    res.status(200).json({ duplicate: true, recordingDate, percentFull, waterLevel, dailyProduction });
+    return;
+  }
+
+  res.status(201).json({ duplicate: false, recordingDate, percentFull, waterLevel, dailyProduction });
 });
 
 export default router;
