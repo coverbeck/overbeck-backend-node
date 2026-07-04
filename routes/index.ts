@@ -24,6 +24,7 @@ interface LochLomondRow {
 }
 
 router.get('/weather', async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
   const readings = db.prepare(
     'SELECT recording_date, percent_full FROM loch_lomond ORDER BY recording_date'
   ).all() as LochLomondRow[];
