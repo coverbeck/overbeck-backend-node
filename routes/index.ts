@@ -126,4 +126,144 @@ router.post('/api/loch-lomond', requireAuth, (req: Request, res: Response) => {
   res.status(201).json({ duplicate: false, recordingDate, percentFull, waterLevel, dailyProduction });
 });
 
+const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^\d{2}:\d{2}$/;
+
+interface ElectricReadingInput {
+  usageDate: string;
+  startTime: string;
+  endTime: string;
+  importKwh: number;
+  exportKwh: number;
+  cost: number;
+}
+
+interface GasReadingInput {
+  usageDate: string;
+  therms: number;
+  cost: number;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isElectricReading(reading: unknown): reading is ElectricReadingInput {
+  if (typeof reading !== 'object' || reading === null) return false;
+  const r = reading as Record<string, unknown>;
+  return (
+    typeof r.usageDate === 'string' && USAGE_DATE_PATTERN.test(r.usageDate) &&
+    typeof r.startTime === 'string' && TIME_PATTERN.test(r.startTime) &&
+    typeof r.endTime === 'string' && TIME_PATTERN.test(r.endTime) &&
+    isFiniteNumber(r.importKwh) &&
+    isFiniteNumber(r.exportKwh) &&
+    isFiniteNumber(r.cost)
+  );
+}
+
+function isGasReading(reading: unknown): reading is GasReadingInput {
+  if (typeof reading !== 'object' || reading === null) return false;
+  const r = reading as Record<string, unknown>;
+  return (
+    typeof r.usageDate === 'string' && USAGE_DATE_PATTERN.test(r.usageDate) &&
+    isFiniteNumber(r.therms) &&
+    isFiniteNumber(r.cost)
+  );
+}
+
+const insertElectricReading = db.prepare(
+  'INSERT OR IGNORE INTO electric_usage (usage_date, start_time, end_time, import_kwh, export_kwh, cost) VALUES (?, ?, ?, ?, ?, ?)'
+);
+const insertGasReading = db.prepare(
+  'INSERT OR IGNORE INTO gas_usage (usage_date, therms, cost) VALUES (?, ?, ?)'
+);
+
+const insertElectricReadings = db.transaction((readings: ElectricReadingInput[]) => {
+  let inserted = 0;
+  for (const r of readings) {
+    if (insertElectricReading.run(r.usageDate, r.startTime, r.endTime, r.importKwh, r.exportKwh, r.cost).changes > 0) {
+      inserted++;
+    }
+  }
+  return inserted;
+});
+
+const insertGasReadings = db.transaction((readings: GasReadingInput[]) => {
+  let inserted = 0;
+  for (const r of readings) {
+    if (insertGasReading.run(r.usageDate, r.therms, r.cost).changes > 0) {
+      inserted++;
+    }
+  }
+  return inserted;
+});
+
+router.post('/api/electric-usage', requireAuth, (req: Request, res: Response) => {
+  const { electric, gas } = (req.body ?? {}) as { electric?: unknown; gas?: unknown };
+
+  if (electric === undefined && gas === undefined) {
+    res.status(400).json({ error: 'at least one of electric or gas must be provided' });
+    return;
+  }
+  if (electric !== undefined && !Array.isArray(electric)) {
+    res.status(400).json({ error: 'electric must be an array if provided' });
+    return;
+  }
+  if (gas !== undefined && !Array.isArray(gas)) {
+    res.status(400).json({ error: 'gas must be an array if provided' });
+    return;
+  }
+
+  const electricReadings = (electric ?? []) as unknown[];
+  const gasReadings = (gas ?? []) as unknown[];
+
+  for (const reading of electricReadings) {
+    if (!isElectricReading(reading)) {
+      res.status(400).json({ error: 'invalid electric reading', reading });
+      return;
+    }
+  }
+  for (const reading of gasReadings) {
+    if (!isGasReading(reading)) {
+      res.status(400).json({ error: 'invalid gas reading', reading });
+      return;
+    }
+  }
+
+  const electricInserted = electricReadings.length
+    ? insertElectricReadings(electricReadings as ElectricReadingInput[])
+    : 0;
+  const gasInserted = gasReadings.length ? insertGasReadings(gasReadings as GasReadingInput[]) : 0;
+
+  res.status(201).json({
+    electric: {
+      received: electricReadings.length,
+      inserted: electricInserted,
+      duplicates: electricReadings.length - electricInserted,
+    },
+    gas: {
+      received: gasReadings.length,
+      inserted: gasInserted,
+      duplicates: gasReadings.length - gasInserted,
+    },
+  });
+});
+
+router.get('/api/electric-usage/latest', requireAuth, (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+
+  const electricLatest = db.prepare(
+    'SELECT usage_date, start_time FROM electric_usage ORDER BY usage_date DESC, start_time DESC LIMIT 1'
+  ).get() as { usage_date: string; start_time: string } | undefined;
+
+  const gasLatest = db.prepare(
+    'SELECT usage_date FROM gas_usage ORDER BY usage_date DESC LIMIT 1'
+  ).get() as { usage_date: string } | undefined;
+
+  res.json({
+    electric: electricLatest ? { usageDate: electricLatest.usage_date, startTime: electricLatest.start_time } : null,
+    gas: gasLatest ? { usageDate: gasLatest.usage_date } : null,
+  });
+});
+
 export default router;

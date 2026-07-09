@@ -19,7 +19,7 @@ app.set('view engine', 'njk');
 
 app.use(requireOriginSecret);
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false }));
 
 app.use('/', indexRouter);
