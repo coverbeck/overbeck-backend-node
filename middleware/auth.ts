@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  res.set('Cache-Control', 'no-store');
+
   const authUser = process.env.AUTH_USER;
   const authPass = process.env.AUTH_PASS;
   if (!authUser || !authPass) {
