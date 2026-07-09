@@ -46,6 +46,44 @@ router.get('/weather', async (req: Request, res: Response) => {
   });
 });
 
+interface ElectricDailyRow {
+  usage_date: string;
+  import_kwh: number;
+  export_kwh: number;
+  cost: number;
+}
+
+interface GasDailyRow {
+  usage_date: string;
+  therms: number;
+  cost: number;
+}
+
+router.get('/electric-usage', requireAuth, (req: Request, res: Response) => {
+  const electricDaily = db.prepare(`
+    SELECT usage_date, SUM(import_kwh) AS import_kwh, SUM(export_kwh) AS export_kwh, SUM(cost) AS cost
+    FROM electric_usage
+    GROUP BY usage_date
+    ORDER BY usage_date
+  `).all() as ElectricDailyRow[];
+
+  const gasDaily = db.prepare(
+    'SELECT usage_date, therms, cost FROM gas_usage ORDER BY usage_date'
+  ).all() as GasDailyRow[];
+
+  res.render('electric-usage.njk', {
+    electricLabels: electricDaily.map((r) => r.usage_date),
+    electricImport: electricDaily.map((r) => r.import_kwh),
+    electricExport: electricDaily.map((r) => r.export_kwh),
+    electricCost: electricDaily.map((r) => r.cost),
+    gasLabels: gasDaily.map((r) => r.usage_date),
+    gasTherms: gasDaily.map((r) => r.therms),
+    gasCost: gasDaily.map((r) => r.cost),
+    lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
+    lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
+  });
+});
+
 const RSO_FILENAME_PATTERN = /^[A-Za-z0-9_-]+\.md$/;
 
 function renderRsoPage(res: Response, filename: string, showImage: boolean) {

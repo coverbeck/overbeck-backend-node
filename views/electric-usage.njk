@@ -1,0 +1,103 @@
+{% extends "layouts/base.njk" %}
+
+{% block title %}Electric Usage{% endblock %}
+
+{% block content %}
+<h1>Electric &amp; Gas Usage</h1>
+<p>PG&amp;E usage data, daily totals.</p>
+
+<h2>Electric</h2>
+<div style="max-width: 900px">
+  <canvas id="electric-chart"></canvas>
+</div>
+<p>Last checked: {{ lastElectric }}</p>
+
+<h2>Natural Gas</h2>
+<div style="max-width: 900px">
+  <canvas id="gas-chart"></canvas>
+</div>
+<p>Last checked: {{ lastGas }}</p>
+{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const electricLabels = {{ electricLabels | dump | safe }};
+  const electricImport = {{ electricImport | dump | safe }};
+  const electricExport = {{ electricExport | dump | safe }};
+  const electricCost = {{ electricCost | dump | safe }};
+
+  new Chart(document.getElementById('electric-chart'), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Import (kWh)',
+          data: electricLabels.map((date, i) => ({ x: date, y: electricImport[i] })),
+          yAxisID: 'y',
+        },
+        {
+          label: 'Export (kWh)',
+          data: electricLabels.map((date, i) => ({ x: date, y: electricExport[i] })),
+          yAxisID: 'y',
+        },
+        {
+          label: 'Cost ($)',
+          data: electricLabels.map((date, i) => ({ x: date, y: electricCost[i] })),
+          yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      scales: {
+        x: { type: 'time', time: { unit: 'month' } },
+        y: { type: 'linear', position: 'left', title: { display: true, text: 'kWh' } },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: '$' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+
+  const gasLabels = {{ gasLabels | dump | safe }};
+  const gasTherms = {{ gasTherms | dump | safe }};
+  const gasCost = {{ gasCost | dump | safe }};
+
+  new Chart(document.getElementById('gas-chart'), {
+    type: 'line',
+    data: {
+      datasets: [
+        {
+          label: 'Usage (therms)',
+          data: gasLabels.map((date, i) => ({ x: date, y: gasTherms[i] })),
+          yAxisID: 'y',
+        },
+        {
+          label: 'Cost ($)',
+          data: gasLabels.map((date, i) => ({ x: date, y: gasCost[i] })),
+          yAxisID: 'y1',
+        },
+      ],
+    },
+    options: {
+      scales: {
+        x: { type: 'time', time: { unit: 'month' } },
+        y: { type: 'linear', position: 'left', title: { display: true, text: 'therms' } },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: '$' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+</script>
+{% endblock %}
