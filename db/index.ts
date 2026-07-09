@@ -28,4 +28,28 @@ if (!lochLomondColumns.has('daily_production')) {
   db.exec('ALTER TABLE loch_lomond ADD COLUMN daily_production REAL');
 }
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS electric_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    import_kwh REAL NOT NULL,
+    export_kwh REAL NOT NULL,
+    cost REAL NOT NULL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(usage_date, start_time)
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS gas_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usage_date TEXT NOT NULL UNIQUE,
+    therms REAL NOT NULL,
+    cost REAL NOT NULL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
 export default db;
