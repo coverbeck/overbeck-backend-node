@@ -59,6 +59,99 @@ interface GasDailyRow {
   cost: number;
 }
 
+interface BillingPeriodRow {
+  start_date: string;
+  end_date: string;
+}
+
+interface PeriodWindow {
+  shortLabel: [string, string];
+  fullLabel: string;
+  windowStart: string;
+  windowEnd: string | null; // exclusive; null means open-ended (still in progress)
+}
+
+function todayPacific(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// Counts how many days of [startDate, endDate] (inclusive) fall in each calendar month,
+// in chronological order. Dates are treated as plain calendar days (parsed as UTC) since
+// they carry no time-of-day/timezone meaning here.
+function daysInMonthBuckets(startDate: string, endDate: string): Array<[string, number]> {
+  const bucketMap = new Map<string, number>();
+  let cur = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (cur.getTime() <= end.getTime()) {
+    const key = cur.toISOString().slice(0, 7); // YYYY-MM
+    bucketMap.set(key, (bucketMap.get(key) ?? 0) + 1);
+    cur = new Date(cur.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return [...bucketMap.entries()];
+}
+
+function monthYear(key: string): { year: number; month: number } {
+  const [year, month] = key.split('-').map(Number);
+  return { year, month: month - 1 };
+}
+
+// Whichever calendar month accounts for the most days in the period (its "primary" month).
+// Returned as two lines (Chart.js renders a string[] tick label as centered, wrapped lines).
+function formatShortLabel(startDate: string, endDate: string): [string, string] {
+  const buckets = daysInMonthBuckets(startDate, endDate);
+  const primary = buckets.reduce((max, cur) => (cur[1] > max[1] ? cur : max));
+  const { year, month } = monthYear(primary[0]);
+  return [MONTH_ABBR[month], String(year).slice(2)];
+}
+
+function formatFullLabel(startDate: string, endDate: string): string {
+  const format = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return `${MONTH_FULL[month - 1]} ${day}, ${year}`;
+  };
+  return `${format(startDate)} - ${format(endDate)}`;
+}
+
+// PG&E's own bill timeIntervals overlap by a day at each boundary (bill N's end_date is
+// one day after bill N+1's start_date), so periods are chained using each other's start_date
+// rather than each period's own end_date, which would double-count the boundary day.
+function buildPeriodWindows(periods: BillingPeriodRow[]): PeriodWindow[] {
+  if (periods.length === 0) return [];
+
+  const windows: PeriodWindow[] = periods.map((p, i) => {
+    const next = periods[i + 1];
+    return {
+      shortLabel: formatShortLabel(p.start_date, p.end_date),
+      fullLabel: formatFullLabel(p.start_date, p.end_date),
+      windowStart: p.start_date,
+      windowEnd: next ? next.start_date : p.end_date,
+    };
+  });
+
+  const lastEndDate = periods[periods.length - 1].end_date;
+  const today = todayPacific();
+  if (lastEndDate < today) {
+    windows.push({
+      shortLabel: formatShortLabel(lastEndDate, today),
+      fullLabel: `${formatFullLabel(lastEndDate, today)} (in progress)`,
+      windowStart: lastEndDate,
+      windowEnd: null,
+    });
+  }
+
+  return windows;
+}
+
+function inWindow(date: string, window: PeriodWindow): boolean {
+  return date >= window.windowStart && (window.windowEnd === null || date < window.windowEnd);
+}
+
 router.get('/electric-usage', requireAuth, (req: Request, res: Response) => {
   const electricDaily = db.prepare(`
     SELECT usage_date, SUM(import_kwh) AS import_kwh, SUM(export_kwh) AS export_kwh, SUM(cost) AS cost
@@ -71,14 +164,57 @@ router.get('/electric-usage', requireAuth, (req: Request, res: Response) => {
     'SELECT usage_date, therms, cost FROM gas_usage ORDER BY usage_date'
   ).all() as GasDailyRow[];
 
+  const billingPeriods = db.prepare(
+    'SELECT start_date, end_date FROM billing_periods ORDER BY start_date ASC'
+  ).all() as BillingPeriodRow[];
+
+  const windows = buildPeriodWindows(billingPeriods);
+
+  const periodRows = windows.map((window) => {
+    let importKwh = 0;
+    let exportKwh = 0;
+    let electricCostSum = 0;
+    let hasElectric = false;
+    for (const row of electricDaily) {
+      if (inWindow(row.usage_date, window)) {
+        importKwh += row.import_kwh;
+        exportKwh += row.export_kwh;
+        electricCostSum += row.cost;
+        hasElectric = true;
+      }
+    }
+
+    let therms = 0;
+    let gasCostSum = 0;
+    let hasGas = false;
+    for (const row of gasDaily) {
+      if (inWindow(row.usage_date, window)) {
+        therms += row.therms;
+        gasCostSum += row.cost;
+        hasGas = true;
+      }
+    }
+
+    return {
+      shortLabel: window.shortLabel,
+      fullLabel: window.fullLabel,
+      importKwh,
+      exportKwh,
+      electricCost: electricCostSum,
+      therms,
+      gasCost: gasCostSum,
+      hasData: hasElectric || hasGas,
+    };
+  }).filter((row) => row.hasData);
+
   res.render('electric-usage.njk', {
-    electricLabels: electricDaily.map((r) => r.usage_date),
-    electricImport: electricDaily.map((r) => r.import_kwh),
-    electricExport: electricDaily.map((r) => r.export_kwh),
-    electricCost: electricDaily.map((r) => r.cost),
-    gasLabels: gasDaily.map((r) => r.usage_date),
-    gasTherms: gasDaily.map((r) => r.therms),
-    gasCost: gasDaily.map((r) => r.cost),
+    periodLabels: periodRows.map((r) => r.shortLabel),
+    periodFullLabels: periodRows.map((r) => r.fullLabel),
+    electricImportByPeriod: periodRows.map((r) => r.importKwh),
+    electricExportByPeriod: periodRows.map((r) => r.exportKwh),
+    electricCostByPeriod: periodRows.map((r) => r.electricCost),
+    gasThermsByPeriod: periodRows.map((r) => r.therms),
+    gasCostByPeriod: periodRows.map((r) => r.gasCost),
     lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
     lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
   });

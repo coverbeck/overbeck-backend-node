@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Electric &amp; Gas Usage</h1>
-<p>PG&amp;E usage data, daily totals.</p>
+<p>PG&amp;E usage data, by billing period.</p>
 
 <h2>Electric</h2>
 <div style="max-width: 900px">
@@ -21,41 +21,80 @@
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  const electricLabels = {{ electricLabels | dump | safe }};
-  const electricImport = {{ electricImport | dump | safe }};
-  const electricExport = {{ electricExport | dump | safe }};
-  const electricCost = {{ electricCost | dump | safe }};
+  const periodLabels = {{ periodLabels | dump | safe }};
+  const periodFullLabels = {{ periodFullLabels | dump | safe }};
+  const electricImportByPeriod = {{ electricImportByPeriod | dump | safe }};
+  const electricExportByPeriod = {{ electricExportByPeriod | dump | safe }};
+  const electricCostByPeriod = {{ electricCostByPeriod | dump | safe }};
+  const gasThermsByPeriod = {{ gasThermsByPeriod | dump | safe }};
+  const gasCostByPeriod = {{ gasCostByPeriod | dump | safe }};
+
+  // Net (import - export) per period drives bar direction/color, so it's obvious at a glance
+  // whether a period was net-imported (drew more from the grid) or net-exported (sent more to
+  // it), matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip
+  // so nothing is lost relative to the old two-bar view.
+  const electricNetByPeriod = electricImportByPeriod.map((v, i) => v - electricExportByPeriod[i]);
+  const NET_IMPORT_COLOR = '#4e79a7';
+  const NET_EXPORT_COLOR = '#59a14f';
 
   new Chart(document.getElementById('electric-chart'), {
-    type: 'line',
     data: {
+      labels: periodLabels,
       datasets: [
         {
-          label: 'Import (kWh)',
-          data: electricLabels.map((date, i) => ({ x: date, y: electricImport[i] })),
+          type: 'bar',
+          label: 'Net Grid Usage (kWh)',
+          data: electricNetByPeriod,
           yAxisID: 'y',
+          backgroundColor: electricNetByPeriod.map((v) => (v >= 0 ? NET_IMPORT_COLOR : NET_EXPORT_COLOR)),
         },
         {
-          label: 'Export (kWh)',
-          data: electricLabels.map((date, i) => ({ x: date, y: electricExport[i] })),
-          yAxisID: 'y',
-        },
-        {
+          type: 'line',
           label: 'Cost ($)',
-          data: electricLabels.map((date, i) => ({ x: date, y: electricCost[i] })),
+          data: electricCostByPeriod,
           yAxisID: 'y1',
+          borderColor: '#e15759',
+          backgroundColor: '#e15759',
         },
       ],
     },
     options: {
+      plugins: {
+        legend: {
+          labels: {
+            generateLabels: (chart) => {
+              const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+              return [
+                { text: 'Net import (used more than exported)', fillStyle: NET_IMPORT_COLOR, strokeStyle: NET_IMPORT_COLOR },
+                { text: 'Net export (exported more than used)', fillStyle: NET_EXPORT_COLOR, strokeStyle: NET_EXPORT_COLOR },
+                base[1],
+              ];
+            },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            title: (items) => periodFullLabels[items[0].dataIndex],
+            label: (ctx) => {
+              if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+              const i = ctx.dataIndex;
+              const net = ctx.parsed.y;
+              return [
+                `Net: ${net >= 0 ? 'imported' : 'exported'} ${Math.abs(net).toFixed(1)} kWh`,
+                `Import: ${electricImportByPeriod[i].toFixed(1)} kWh`,
+                `Export: ${electricExportByPeriod[i].toFixed(1)} kWh`,
+              ];
+            },
+          },
+        },
+      },
       scales: {
-        x: { type: 'time', time: { unit: 'month' } },
-        y: { type: 'linear', position: 'left', title: { display: true, text: 'kWh' } },
+        x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
+        y: { type: 'linear', position: 'left', title: { display: true, text: 'Net kWh (import - export)' } },
         y1: {
           type: 'linear',
           position: 'right',
@@ -66,29 +105,34 @@
     },
   });
 
-  const gasLabels = {{ gasLabels | dump | safe }};
-  const gasTherms = {{ gasTherms | dump | safe }};
-  const gasCost = {{ gasCost | dump | safe }};
-
   new Chart(document.getElementById('gas-chart'), {
-    type: 'line',
     data: {
+      labels: periodLabels,
       datasets: [
         {
+          type: 'bar',
           label: 'Usage (therms)',
-          data: gasLabels.map((date, i) => ({ x: date, y: gasTherms[i] })),
+          data: gasThermsByPeriod,
           yAxisID: 'y',
         },
         {
+          type: 'line',
           label: 'Cost ($)',
-          data: gasLabels.map((date, i) => ({ x: date, y: gasCost[i] })),
+          data: gasCostByPeriod,
           yAxisID: 'y1',
         },
       ],
     },
     options: {
+      plugins: {
+        tooltip: {
+          callbacks: {
+            title: (items) => periodFullLabels[items[0].dataIndex],
+          },
+        },
+      },
       scales: {
-        x: { type: 'time', time: { unit: 'month' } },
+        x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
         y: { type: 'linear', position: 'left', title: { display: true, text: 'therms' } },
         y1: {
           type: 'linear',
