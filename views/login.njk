@@ -1,0 +1,18 @@
+{% extends "layouts/base.njk" %}
+
+{% block title %}Log In{% endblock %}
+
+{% block content %}
+<h1>Log In</h1>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+<form class="login-form" method="POST" action="/login">
+  <input type="hidden" name="redirect" value="{{ redirect }}">
+  <label for="username">Username</label>
+  <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" autocomplete="current-password" required>
+  <button type="submit">Log In</button>
+</form>
+{% endblock %}

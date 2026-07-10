@@ -44,3 +44,18 @@ main {
   max-width: 100%;
   margin: 0 auto 1.5rem;
 }
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  max-width: 320px;
+  gap: 0.5rem;
+}
+
+.login-form button {
+  margin-top: 0.5rem;
+}
+
+.error {
+  color: #c0392b;
+}

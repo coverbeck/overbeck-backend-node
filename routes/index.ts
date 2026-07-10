@@ -8,6 +8,7 @@ import db from '../db/index.ts';
 import { getCurrentWeather } from '../weather.ts';
 import type { WeatherReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
+import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -152,7 +153,35 @@ function inWindow(date: string, window: PeriodWindow): boolean {
   return date >= window.windowStart && (window.windowEnd === null || date < window.windowEnd);
 }
 
-router.get('/electric-usage', requireAuth, (req: Request, res: Response) => {
+function safeRedirectTarget(raw: unknown): string {
+  if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
+    return raw;
+  }
+  return '/electric-usage';
+}
+
+router.get('/login', (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  res.render('login.njk', {
+    redirect: safeRedirectTarget(req.query.redirect),
+  });
+});
+
+router.post('/login', (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  const { username, password } = req.body as { username?: string; password?: string };
+  const redirect = safeRedirectTarget((req.body as { redirect?: string }).redirect);
+
+  if (typeof username !== 'string' || typeof password !== 'string' || !verifyLogin(username, password)) {
+    res.status(401).render('login.njk', { redirect, error: 'Incorrect username or password.' });
+    return;
+  }
+
+  setSessionCookie(res);
+  res.redirect(redirect);
+});
+
+router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
   const electricDaily = db.prepare(`
     SELECT usage_date, SUM(import_kwh) AS import_kwh, SUM(export_kwh) AS export_kwh, SUM(cost) AS cost
     FROM electric_usage
