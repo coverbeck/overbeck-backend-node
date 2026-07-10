@@ -49,10 +49,24 @@ main {
   display: flex;
   flex-direction: column;
   max-width: 320px;
-  gap: 0.5rem;
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.login-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.login-form input {
+  padding: 0.5rem;
+  font-size: 1rem;
 }
 
 .login-form button {
+  padding: 0.6rem;
+  font-size: 1rem;
   margin-top: 0.5rem;
 }
 
