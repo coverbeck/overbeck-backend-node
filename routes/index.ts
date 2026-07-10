@@ -227,6 +227,8 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     return {
       shortLabel: window.shortLabel,
       fullLabel: window.fullLabel,
+      windowStart: window.windowStart,
+      windowEnd: window.windowEnd,
       importKwh,
       exportKwh,
       electricCost: electricCostSum,
@@ -239,11 +241,17 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
   res.render('electric-usage.njk', {
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
+    periodWindowStarts: periodRows.map((r) => r.windowStart),
+    periodWindowEnds: periodRows.map((r) => r.windowEnd),
     electricImportByPeriod: periodRows.map((r) => r.importKwh),
     electricExportByPeriod: periodRows.map((r) => r.exportKwh),
     electricCostByPeriod: periodRows.map((r) => r.electricCost),
     gasThermsByPeriod: periodRows.map((r) => r.therms),
     gasCostByPeriod: periodRows.map((r) => r.gasCost),
+    electricDailyDates: electricDaily.map((r) => r.usage_date),
+    electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
+    electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),
+    electricDailyCost: electricDaily.map((r) => r.cost),
     lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
     lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
   });

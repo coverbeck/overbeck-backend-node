@@ -45,6 +45,16 @@ main {
   margin: 0 auto 1.5rem;
 }
 
+.period-select-row {
+  margin-bottom: 0.75rem;
+}
+
+.period-select-row select {
+  margin-left: 0.5rem;
+  padding: 0.3rem;
+  font-size: 1rem;
+}
+
 .login-form {
   display: flex;
   flex-direction: column;

@@ -12,6 +12,15 @@
 </div>
 <p>Last checked: {{ lastElectric }}</p>
 
+<h2>Electric by Day</h2>
+<div class="period-select-row">
+  <label for="period-select">Billing period:</label>
+  <select id="period-select"></select>
+</div>
+<div style="max-width: 900px">
+  <canvas id="daily-chart"></canvas>
+</div>
+
 <h2>Natural Gas</h2>
 <div style="max-width: 900px">
   <canvas id="gas-chart"></canvas>
@@ -27,83 +36,147 @@
 <script>
   const periodLabels = {{ periodLabels | dump | safe }};
   const periodFullLabels = {{ periodFullLabels | dump | safe }};
+  const periodWindowStarts = {{ periodWindowStarts | dump | safe }};
+  const periodWindowEnds = {{ periodWindowEnds | dump | safe }};
   const electricImportByPeriod = {{ electricImportByPeriod | dump | safe }};
   const electricExportByPeriod = {{ electricExportByPeriod | dump | safe }};
   const electricCostByPeriod = {{ electricCostByPeriod | dump | safe }};
   const gasThermsByPeriod = {{ gasThermsByPeriod | dump | safe }};
   const gasCostByPeriod = {{ gasCostByPeriod | dump | safe }};
+  const electricDailyDates = {{ electricDailyDates | dump | safe }};
+  const electricDailyImportKwh = {{ electricDailyImportKwh | dump | safe }};
+  const electricDailyExportKwh = {{ electricDailyExportKwh | dump | safe }};
+  const electricDailyCost = {{ electricDailyCost | dump | safe }};
 
-  // Net (import - export) per period drives bar direction/color, so it's obvious at a glance
-  // whether a period was net-imported (drew more from the grid) or net-exported (sent more to
-  // it), matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip
-  // so nothing is lost relative to the old two-bar view.
-  const electricNetByPeriod = electricImportByPeriod.map((v, i) => v - electricExportByPeriod[i]);
   const NET_IMPORT_COLOR = '#4e79a7';
   const NET_EXPORT_COLOR = '#59a14f';
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  new Chart(document.getElementById('electric-chart'), {
-    data: {
-      labels: periodLabels,
-      datasets: [
-        {
-          type: 'bar',
-          label: 'Net Grid Usage (kWh)',
-          data: electricNetByPeriod,
-          yAxisID: 'y',
-          backgroundColor: electricNetByPeriod.map((v) => (v >= 0 ? NET_IMPORT_COLOR : NET_EXPORT_COLOR)),
-        },
-        {
-          type: 'line',
-          label: 'Cost ($)',
-          data: electricCostByPeriod,
-          yAxisID: 'y1',
-          borderColor: '#e15759',
-          backgroundColor: '#e15759',
-        },
-      ],
-    },
-    options: {
-      plugins: {
-        legend: {
-          labels: {
-            generateLabels: (chart) => {
-              const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-              return [
-                { text: 'Net import (used more than exported)', fillStyle: NET_IMPORT_COLOR, strokeStyle: NET_IMPORT_COLOR },
-                { text: 'Net export (exported more than used)', fillStyle: NET_EXPORT_COLOR, strokeStyle: NET_EXPORT_COLOR },
-                base[1],
-              ];
+  function formatDayLabel(dateStr) {
+    const [, month, day] = dateStr.split('-').map(Number);
+    return `${MONTH_ABBR[month - 1]} ${day}`;
+  }
+
+  // Net (import - export) drives bar direction/color, so it's obvious at a glance whether a
+  // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
+  // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
+  // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr) {
+    const netArr = importArr.map((v, i) => v - exportArr[i]);
+    return new Chart(document.getElementById(canvasId), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Net Grid Usage (kWh)',
+            data: netArr,
+            yAxisID: 'y',
+            backgroundColor: netArr.map((v) => (v >= 0 ? NET_IMPORT_COLOR : NET_EXPORT_COLOR)),
+          },
+          {
+            type: 'line',
+            label: 'Cost ($)',
+            data: costArr,
+            yAxisID: 'y1',
+            borderColor: '#e15759',
+            backgroundColor: '#e15759',
+          },
+        ],
+      },
+      options: {
+        plugins: {
+          legend: {
+            labels: {
+              generateLabels: (chart) => {
+                const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                return [
+                  { text: 'Net import (used more than exported)', fillStyle: NET_IMPORT_COLOR, strokeStyle: NET_IMPORT_COLOR },
+                  { text: 'Net export (exported more than used)', fillStyle: NET_EXPORT_COLOR, strokeStyle: NET_EXPORT_COLOR },
+                  base[1],
+                ];
+              },
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => fullLabels[items[0].dataIndex],
+              label: (ctx) => {
+                if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+                const i = ctx.dataIndex;
+                const net = ctx.parsed.y;
+                return [
+                  `Net: ${net >= 0 ? 'imported' : 'exported'} ${Math.abs(net).toFixed(1)} kWh`,
+                  `Import: ${importArr[i].toFixed(1)} kWh`,
+                  `Export: ${exportArr[i].toFixed(1)} kWh`,
+                ];
+              },
             },
           },
         },
-        tooltip: {
-          callbacks: {
-            title: (items) => periodFullLabels[items[0].dataIndex],
-            label: (ctx) => {
-              if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
-              const i = ctx.dataIndex;
-              const net = ctx.parsed.y;
-              return [
-                `Net: ${net >= 0 ? 'imported' : 'exported'} ${Math.abs(net).toFixed(1)} kWh`,
-                `Import: ${electricImportByPeriod[i].toFixed(1)} kWh`,
-                `Export: ${electricExportByPeriod[i].toFixed(1)} kWh`,
-              ];
-            },
+        scales: {
+          x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
+          y: { type: 'linear', position: 'left', title: { display: true, text: 'Net kWh (import - export)' } },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: '$' },
+            grid: { drawOnChartArea: false },
           },
         },
       },
-      scales: {
-        x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
-        y: { type: 'linear', position: 'left', title: { display: true, text: 'Net kWh (import - export)' } },
-        y1: {
-          type: 'linear',
-          position: 'right',
-          title: { display: true, text: '$' },
-          grid: { drawOnChartArea: false },
-        },
-      },
-    },
+    });
+  }
+
+  makeNetUsageChart(
+    'electric-chart',
+    periodLabels,
+    periodFullLabels,
+    electricImportByPeriod,
+    electricExportByPeriod,
+    electricCostByPeriod
+  );
+
+  function dailyDataForPeriod(index) {
+    const start = periodWindowStarts[index];
+    const end = periodWindowEnds[index];
+    const labels = [];
+    const fullLabels = [];
+    const importArr = [];
+    const exportArr = [];
+    const costArr = [];
+    for (let i = 0; i < electricDailyDates.length; i++) {
+      const date = electricDailyDates[i];
+      if (date >= start && (end === null || date < end)) {
+        labels.push(formatDayLabel(date));
+        fullLabels.push(date);
+        importArr.push(electricDailyImportKwh[i]);
+        exportArr.push(electricDailyExportKwh[i]);
+        costArr.push(electricDailyCost[i]);
+      }
+    }
+    return { labels, fullLabels, importArr, exportArr, costArr };
+  }
+
+  const periodSelect = document.getElementById('period-select');
+  periodFullLabels.forEach((label, i) => {
+    const option = document.createElement('option');
+    option.value = String(i);
+    option.textContent = label;
+    periodSelect.appendChild(option);
   });
+
+  let dailyChart = null;
+  function renderDailyChart(index) {
+    if (dailyChart) dailyChart.destroy();
+    const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
+    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr);
+  }
+
+  const defaultPeriodIndex = periodFullLabels.length - 1;
+  periodSelect.value = String(defaultPeriodIndex);
+  renderDailyChart(defaultPeriodIndex);
+  periodSelect.addEventListener('change', () => renderDailyChart(Number(periodSelect.value)));
 
   new Chart(document.getElementById('gas-chart'), {
     data: {
