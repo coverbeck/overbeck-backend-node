@@ -61,7 +61,7 @@
   // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
   // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
   // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -115,7 +115,7 @@
           },
         },
         scales: {
-          x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
+          x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: autoSkipTicks } },
           y: { type: 'linear', position: 'left', title: { display: true, text: 'Net kWh (import - export)' } },
           y1: {
             type: 'linear',
@@ -134,7 +134,8 @@
     periodFullLabels,
     electricImportByPeriod,
     electricExportByPeriod,
-    electricCostByPeriod
+    electricCostByPeriod,
+    false
   );
 
   function dailyDataForPeriod(index) {
@@ -170,7 +171,7 @@
   function renderDailyChart(index) {
     if (dailyChart) dailyChart.destroy();
     const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
-    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr);
+    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true);
   }
 
   const defaultPeriodIndex = periodFullLabels.length - 1;
