@@ -287,6 +287,58 @@ router.post('/api/electric-usage', requireAuth, (req: Request, res: Response) =>
   });
 });
 
+interface BillingPeriodInput {
+  startDate: string;
+  endDate: string;
+}
+
+function isBillingPeriod(period: unknown): period is BillingPeriodInput {
+  if (typeof period !== 'object' || period === null) return false;
+  const p = period as Record<string, unknown>;
+  return (
+    typeof p.startDate === 'string' && USAGE_DATE_PATTERN.test(p.startDate) &&
+    typeof p.endDate === 'string' && USAGE_DATE_PATTERN.test(p.endDate)
+  );
+}
+
+const insertBillingPeriod = db.prepare(
+  'INSERT OR IGNORE INTO billing_periods (start_date, end_date) VALUES (?, ?)'
+);
+
+const insertBillingPeriods = db.transaction((periods: BillingPeriodInput[]) => {
+  let inserted = 0;
+  for (const p of periods) {
+    if (insertBillingPeriod.run(p.startDate, p.endDate).changes > 0) {
+      inserted++;
+    }
+  }
+  return inserted;
+});
+
+router.post('/api/billing-periods', requireAuth, (req: Request, res: Response) => {
+  const { periods } = (req.body ?? {}) as { periods?: unknown };
+
+  if (!Array.isArray(periods)) {
+    res.status(400).json({ error: 'periods must be an array' });
+    return;
+  }
+
+  for (const period of periods) {
+    if (!isBillingPeriod(period)) {
+      res.status(400).json({ error: 'invalid billing period', period });
+      return;
+    }
+  }
+
+  const inserted = periods.length ? insertBillingPeriods(periods as BillingPeriodInput[]) : 0;
+
+  res.status(201).json({
+    received: periods.length,
+    inserted,
+    duplicates: periods.length - inserted,
+  });
+});
+
 router.get('/api/electric-usage/latest', requireAuth, (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
 

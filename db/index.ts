@@ -52,4 +52,14 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS billing_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(start_date, end_date)
+  )
+`);
+
 export default db;
