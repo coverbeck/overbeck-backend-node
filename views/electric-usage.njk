@@ -20,6 +20,7 @@
 <div style="max-width: 900px">
   <canvas id="daily-chart"></canvas>
 </div>
+<p id="daily-summary"></p>
 
 <h2>Natural Gas</h2>
 <div style="max-width: 900px">
@@ -167,11 +168,26 @@
     periodSelect.appendChild(option);
   });
 
+  function formatSignedDollars(v) {
+    return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+  }
+
+  function renderDailySummary(importArr, exportArr, costArr) {
+    const totalImport = importArr.reduce((sum, v) => sum + v, 0);
+    const totalExport = exportArr.reduce((sum, v) => sum + v, 0);
+    const totalCost = costArr.reduce((sum, v) => sum + v, 0);
+    const net = totalImport - totalExport;
+    const direction = net >= 0 ? 'imported' : 'exported';
+    document.getElementById('daily-summary').textContent =
+      `This period: net ${direction} ${Math.abs(net).toFixed(1)} kWh (cost: ${formatSignedDollars(totalCost)})`;
+  }
+
   let dailyChart = null;
   function renderDailyChart(index) {
     if (dailyChart) dailyChart.destroy();
     const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
     dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true);
+    renderDailySummary(importArr, exportArr, costArr);
   }
 
   const defaultPeriodIndex = periodFullLabels.length - 1;
