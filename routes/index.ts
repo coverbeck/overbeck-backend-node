@@ -252,9 +252,6 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
     electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),
     electricDailyCost: electricDaily.map((r) => r.cost),
-    gasDailyDates: gasDaily.map((r) => r.usage_date),
-    gasDailyTherms: gasDaily.map((r) => r.therms),
-    gasDailyCost: gasDaily.map((r) => r.cost),
     lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
     lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
   });
