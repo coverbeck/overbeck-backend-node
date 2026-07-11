@@ -27,6 +27,16 @@
   <canvas id="gas-chart"></canvas>
 </div>
 <p>Last checked: {{ lastGas }}</p>
+
+<h2>Gas by Day</h2>
+<div class="period-select-row">
+  <label for="gas-period-select">Billing period:</label>
+  <select id="gas-period-select"></select>
+</div>
+<div style="max-width: 900px">
+  <canvas id="gas-daily-chart"></canvas>
+</div>
+<p id="gas-daily-summary"></p>
 {% endblock %}
 
 {% block head %}
@@ -48,6 +58,9 @@
   const electricDailyImportKwh = {{ electricDailyImportKwh | dump | safe }};
   const electricDailyExportKwh = {{ electricDailyExportKwh | dump | safe }};
   const electricDailyCost = {{ electricDailyCost | dump | safe }};
+  const gasDailyDates = {{ gasDailyDates | dump | safe }};
+  const gasDailyTherms = {{ gasDailyTherms | dump | safe }};
+  const gasDailyCost = {{ gasDailyCost | dump | safe }};
 
   const NET_IMPORT_COLOR = '#4e79a7';
   const NET_EXPORT_COLOR = '#59a14f';
@@ -129,6 +142,51 @@
     });
   }
 
+  // Single-series bar+line chart for gas, which has no export to net against.
+  // Shared by the per-period and per-day gas charts.
+  function makeUsageChart(canvasId, labels, fullLabels, valueArr, costArr, valueLabel, valueAxisLabel, autoSkipTicks) {
+    return new Chart(document.getElementById(canvasId), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'bar',
+            label: valueLabel,
+            data: valueArr,
+            yAxisID: 'y',
+          },
+          {
+            type: 'line',
+            label: 'Cost ($)',
+            data: costArr,
+            yAxisID: 'y1',
+            borderColor: '#e15759',
+            backgroundColor: '#e15759',
+          },
+        ],
+      },
+      options: {
+        plugins: {
+          tooltip: {
+            callbacks: {
+              title: (items) => fullLabels[items[0].dataIndex],
+            },
+          },
+        },
+        scales: {
+          x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: autoSkipTicks } },
+          y: { type: 'linear', position: 'left', title: { display: true, text: valueAxisLabel } },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: '$' },
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+  }
+
   makeNetUsageChart(
     'electric-chart',
     periodLabels,
@@ -195,43 +253,53 @@
   renderDailyChart(defaultPeriodIndex);
   periodSelect.addEventListener('change', () => renderDailyChart(Number(periodSelect.value)));
 
-  new Chart(document.getElementById('gas-chart'), {
-    data: {
-      labels: periodLabels,
-      datasets: [
-        {
-          type: 'bar',
-          label: 'Usage (therms)',
-          data: gasThermsByPeriod,
-          yAxisID: 'y',
-        },
-        {
-          type: 'line',
-          label: 'Cost ($)',
-          data: gasCostByPeriod,
-          yAxisID: 'y1',
-        },
-      ],
-    },
-    options: {
-      plugins: {
-        tooltip: {
-          callbacks: {
-            title: (items) => periodFullLabels[items[0].dataIndex],
-          },
-        },
-      },
-      scales: {
-        x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: false } },
-        y: { type: 'linear', position: 'left', title: { display: true, text: 'therms' } },
-        y1: {
-          type: 'linear',
-          position: 'right',
-          title: { display: true, text: '$' },
-          grid: { drawOnChartArea: false },
-        },
-      },
-    },
+  makeUsageChart('gas-chart', periodLabels, periodFullLabels, gasThermsByPeriod, gasCostByPeriod, 'Usage (therms)', 'therms', false);
+
+  function gasDataForPeriod(index) {
+    const start = periodWindowStarts[index];
+    const end = periodWindowEnds[index];
+    const labels = [];
+    const fullLabels = [];
+    const thermsArr = [];
+    const costArr = [];
+    for (let i = 0; i < gasDailyDates.length; i++) {
+      const date = gasDailyDates[i];
+      if (date >= start && (end === null || date < end)) {
+        labels.push(formatDayLabel(date));
+        fullLabels.push(date);
+        thermsArr.push(gasDailyTherms[i]);
+        costArr.push(gasDailyCost[i]);
+      }
+    }
+    return { labels, fullLabels, thermsArr, costArr };
+  }
+
+  const gasPeriodSelect = document.getElementById('gas-period-select');
+  periodFullLabels.forEach((label, i) => {
+    const option = document.createElement('option');
+    option.value = String(i);
+    option.textContent = label;
+    gasPeriodSelect.appendChild(option);
   });
+
+  function renderGasDailySummary(thermsArr, costArr) {
+    const totalTherms = thermsArr.reduce((sum, v) => sum + v, 0);
+    const totalCost = costArr.reduce((sum, v) => sum + v, 0);
+    document.getElementById('gas-daily-summary').textContent =
+      `This period: ${totalTherms.toFixed(1)} therms (cost: ${formatSignedDollars(totalCost)})`;
+  }
+
+  let gasDailyChart = null;
+  function renderGasDailyChart(index) {
+    if (gasDailyChart) gasDailyChart.destroy();
+    const { labels, fullLabels, thermsArr, costArr } = gasDataForPeriod(index);
+    gasDailyChart = makeUsageChart('gas-daily-chart', labels, fullLabels, thermsArr, costArr, 'Usage (therms)', 'therms', true);
+    renderGasDailySummary(thermsArr, costArr);
+  }
+
+  const defaultGasPeriodIndex = periodFullLabels.length - 1;
+  gasPeriodSelect.value = String(defaultGasPeriodIndex);
+  renderGasDailyChart(defaultGasPeriodIndex);
+  gasPeriodSelect.addEventListener('change', () => renderGasDailyChart(Number(gasPeriodSelect.value)));
 </script>
 {% endblock %}
