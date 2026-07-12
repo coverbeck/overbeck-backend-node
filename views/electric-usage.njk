@@ -22,11 +22,10 @@
 </div>
 <p id="daily-summary"></p>
 
-<h2>Electric by Hour</h2>
+<h2 id="hourly-heading">Electric by Hour</h2>
 <div style="max-width: 900px">
   <canvas id="hourly-chart"></canvas>
 </div>
-<p id="hourly-day-label"></p>
 
 <h2>Natural Gas</h2>
 <div style="max-width: 900px">
@@ -240,9 +239,18 @@
       `This period: net ${direction} ${Math.abs(net).toFixed(1)} kWh (cost: ${formatSignedDollars(totalCost)})`;
   }
 
-  function formatFullDayLabel(dateStr) {
-    const [year, month, day] = dateStr.split('-').map(Number);
-    return `${MONTH_ABBR[month - 1]} ${day}, ${year}`;
+  const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  function ordinal(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return `${n}st`;
+    if (n % 10 === 2 && n % 100 !== 12) return `${n}nd`;
+    if (n % 10 === 3 && n % 100 !== 13) return `${n}rd`;
+    return `${n}th`;
+  }
+
+  function formatHeadingDayLabel(dateStr) {
+    const [, month, day] = dateStr.split('-').map(Number);
+    return `${MONTH_FULL[month - 1]} ${ordinal(day)}`;
   }
 
   function formatHourLabel(startTime) {
@@ -264,7 +272,7 @@
     const labels = data.startTime.map(formatHourLabel);
     const fullLabels = data.startTime.map((t, i) => `${date} ${t}–${data.endTime[i]}`);
     hourlyChart = makeNetUsageChart('hourly-chart', labels, fullLabels, data.importKwh, data.exportKwh, data.cost, true);
-    document.getElementById('hourly-day-label').textContent = `Showing: ${formatFullDayLabel(date)}`;
+    document.getElementById('hourly-heading').textContent = `Electric by Hour — ${formatHeadingDayLabel(date)}`;
   }
 
   let dailyChart = null;
