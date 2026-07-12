@@ -66,7 +66,7 @@ interface BillingPeriodRow {
 }
 
 interface PeriodWindow {
-  shortLabel: [string, string];
+  shortLabel: string;
   fullLabel: string;
   windowStart: string;
   windowEnd: string | null; // exclusive; null means open-ended (still in progress)
@@ -103,12 +103,13 @@ function monthYear(key: string): { year: number; month: number } {
 }
 
 // Whichever calendar month accounts for the most days in the period (its "primary" month).
-// Returned as two lines (Chart.js renders a string[] tick label as centered, wrapped lines).
-function formatShortLabel(startDate: string, endDate: string): [string, string] {
+// The year is only appended for January, since consecutive periods are otherwise always in
+// the same year and repeating it on every tick label is redundant.
+function formatShortLabel(startDate: string, endDate: string): string {
   const buckets = daysInMonthBuckets(startDate, endDate);
   const primary = buckets.reduce((max, cur) => (cur[1] > max[1] ? cur : max));
   const { year, month } = monthYear(primary[0]);
-  return [MONTH_ABBR[month], String(year).slice(2)];
+  return month === 0 ? `${MONTH_ABBR[month]} ${String(year).slice(2)}` : MONTH_ABBR[month];
 }
 
 function formatFullLabel(startDate: string, endDate: string): string {
