@@ -22,6 +22,12 @@
 </div>
 <p id="daily-summary"></p>
 
+<h2>Electric by Hour</h2>
+<div style="max-width: 900px">
+  <canvas id="hourly-chart"></canvas>
+</div>
+<p id="hourly-day-label"></p>
+
 <h2>Natural Gas</h2>
 <div style="max-width: 900px">
   <canvas id="gas-chart"></canvas>
@@ -62,7 +68,7 @@
   // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
   // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
   // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -86,6 +92,13 @@
         ],
       },
       options: {
+        onClick: onBarClick ? (evt, _elements, chart) => {
+          const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+          if (points.length > 0) onBarClick(points[0].index);
+        } : undefined,
+        onHover: onBarClick ? (evt, elements) => {
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+        } : undefined,
         plugins: {
           legend: {
             labels: {
@@ -227,12 +240,42 @@
       `This period: net ${direction} ${Math.abs(net).toFixed(1)} kWh (cost: ${formatSignedDollars(totalCost)})`;
   }
 
+  function formatFullDayLabel(dateStr) {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return `${MONTH_ABBR[month - 1]} ${day}, ${year}`;
+  }
+
+  function formatHourLabel(startTime) {
+    const h = Number(startTime.split(':')[0]);
+    const period = h < 12 ? 'AM' : 'PM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12} ${period}`;
+  }
+
+  let hourlyChart = null;
+  let hourlyChartRequestId = 0;
+  async function renderHourlyChart(date) {
+    const requestId = ++hourlyChartRequestId;
+    const res = await fetch(`/api/electric-usage/hourly?date=${encodeURIComponent(date)}`);
+    const data = await res.json();
+    if (requestId !== hourlyChartRequestId) return; // a newer request superseded this one
+
+    if (hourlyChart) hourlyChart.destroy();
+    const labels = data.startTime.map(formatHourLabel);
+    const fullLabels = data.startTime.map((t, i) => `${date} ${t}–${data.endTime[i]}`);
+    hourlyChart = makeNetUsageChart('hourly-chart', labels, fullLabels, data.importKwh, data.exportKwh, data.cost, true);
+    document.getElementById('hourly-day-label').textContent = `Showing: ${formatFullDayLabel(date)}`;
+  }
+
   let dailyChart = null;
   function renderDailyChart(index) {
     if (dailyChart) dailyChart.destroy();
     const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
-    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true);
+    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true, (i) => {
+      renderHourlyChart(fullLabels[i]);
+    });
     renderDailySummary(importArr, exportArr, costArr);
+    if (fullLabels.length > 0) renderHourlyChart(fullLabels[fullLabels.length - 1]);
   }
 
   const defaultPeriodIndex = periodFullLabels.length - 1;

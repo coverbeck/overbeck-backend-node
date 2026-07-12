@@ -512,6 +512,27 @@ router.post('/api/billing-periods', requireAuth, (req: Request, res: Response) =
   });
 });
 
+router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Response) => {
+  const date = req.query.date;
+  if (typeof date !== 'string' || !USAGE_DATE_PATTERN.test(date)) {
+    res.status(400).json({ error: 'date query param must be in YYYY-MM-DD format' });
+    return;
+  }
+
+  const rows = db.prepare(
+    'SELECT start_time, end_time, import_kwh, export_kwh, cost FROM electric_usage WHERE usage_date = ? ORDER BY start_time'
+  ).all(date) as { start_time: string; end_time: string; import_kwh: number; export_kwh: number; cost: number }[];
+
+  res.json({
+    date,
+    startTime: rows.map((r) => r.start_time),
+    endTime: rows.map((r) => r.end_time),
+    importKwh: rows.map((r) => r.import_kwh),
+    exportKwh: rows.map((r) => r.export_kwh),
+    cost: rows.map((r) => r.cost),
+  });
+});
+
 router.get('/api/electric-usage/latest', requireAuth, (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
 
