@@ -67,7 +67,7 @@
   // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
   // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
   // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -113,7 +113,10 @@
           },
           tooltip: {
             callbacks: {
-              title: (items) => fullLabels[items[0].dataIndex],
+              title: (items) => {
+                const label = fullLabels[items[0].dataIndex];
+                return tooltipTitleFn ? tooltipTitleFn(label) : label;
+              },
               label: (ctx) => {
                 if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
                 const i = ctx.dataIndex;
@@ -240,6 +243,13 @@
   }
 
   const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  function formatWeekdayDateLabel(dateStr) {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const weekday = WEEKDAY_FULL[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+    return `${weekday} ${MONTH_FULL[month - 1]} ${day}`;
+  }
 
   function ordinal(n) {
     if (n % 10 === 1 && n % 100 !== 11) return `${n}st`;
@@ -281,7 +291,7 @@
     const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
     dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true, (i) => {
       renderHourlyChart(fullLabels[i]);
-    });
+    }, formatWeekdayDateLabel);
     renderDailySummary(importArr, exportArr, costArr);
     if (fullLabels.length > 0) renderHourlyChart(fullLabels[fullLabels.length - 1]);
   }
