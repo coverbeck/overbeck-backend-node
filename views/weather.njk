@@ -22,6 +22,12 @@
 <p>Weather station data is currently unavailable ({{ weatherError }}).</p>
 {% endif %}
 
+{% if weather and googleMapsApiKey and weatherMapLat and weatherMapLon %}
+<h2>Wind Direction</h2>
+<div id="weather-map" style="max-width: 700px; height: 400px;"></div>
+<p><small>Map location is approximate, not the station's exact position.</small></p>
+{% endif %}
+
 <h2>Loch Lomond Reservoir Level</h2>
 <div style="max-width: 700px">
   <canvas id="lochlomond-chart"></canvas>
@@ -74,5 +80,48 @@
       },
     },
   });
+
+  {% if weather and googleMapsApiKey and weatherMapLat and weatherMapLon %}
+  window.initWeatherMap = function initWeatherMap() {
+    const position = { lat: {{ weatherMapLat }}, lng: {{ weatherMapLon }} };
+    const map = new google.maps.Map(document.getElementById('weather-map'), {
+      center: position,
+      zoom: 15,
+      mapTypeControl: false,
+      streetViewControl: false,
+    });
+
+    // winddir is the compass bearing the wind is blowing FROM; rotate 180deg
+    // so the arrow points in the direction the wind is blowing TOWARD.
+    const rotation = ({{ weather.windDirection }} + 180) % 360;
+
+    new google.maps.Marker({
+      position,
+      map,
+      icon: {
+        path: 'M 0,-10 L 6,8 L 0,4 L -6,8 Z',
+        fillColor: '#ff0000',
+        fillOpacity: 1,
+        strokeColor: '#b71c1c',
+        strokeWeight: 1,
+        scale: 1.5,
+        rotation,
+        anchor: new google.maps.Point(0, 0),
+        labelOrigin: new google.maps.Point(0, -18),
+      },
+      label: {
+        text: '{{ weather.windDirection }}° · {{ weather.windSpeedMph }} mph',
+        color: '#202020',
+        fontSize: '13px',
+        fontWeight: 'bold',
+        className: 'weather-map-label',
+      },
+      title: 'Wind direction (blowing toward)',
+    });
+  };
+  {% endif %}
 </script>
+{% if weather and googleMapsApiKey and weatherMapLat and weatherMapLon %}
+<script src="https://maps.googleapis.com/maps/api/js?key={{ googleMapsApiKey }}&callback=initWeatherMap"></script>
+{% endif %}
 {% endblock %}

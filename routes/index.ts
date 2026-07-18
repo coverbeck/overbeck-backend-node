@@ -38,12 +38,19 @@ router.get('/weather', async (req: Request, res: Response) => {
     weatherError = err instanceof Error ? err.message : 'Unknown error fetching weather';
   }
 
+  const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY || null;
+  const weatherMapLat = process.env.WEATHER_MAP_LAT ? Number(process.env.WEATHER_MAP_LAT) : null;
+  const weatherMapLon = process.env.WEATHER_MAP_LON ? Number(process.env.WEATHER_MAP_LON) : null;
+
   res.render('weather.njk', {
     weather,
     weatherError,
     labels: readings.map((r) => r.recording_date),
     values: readings.map((r) => r.percent_full),
     lastChecked: readings.length ? readings[readings.length - 1].recording_date : null,
+    googleMapsApiKey,
+    weatherMapLat,
+    weatherMapLon,
   });
 });
 
