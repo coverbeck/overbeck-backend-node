@@ -25,7 +25,13 @@
 {% if weather and googleMapsApiKey and weatherMapLat and weatherMapLon %}
 <h2>Wind Direction</h2>
 <div id="weather-map" style="max-width: 700px; height: 400px;"></div>
-<p><small>Map location is approximate, not the station's exact position.</small></p>
+<p>
+  <small>
+    Red arrow is my station, at an approximate location (not its exact position).
+    Blue arrows are the two public stations nearest {{ parks.derby.name }}; green arrows are the two nearest {{ parks.brommer.name }}.
+    Larger arrows mean higher wind speed.
+  </small>
+</p>
 {% endif %}
 
 <h2>Loch Lomond Reservoir Level</h2>
@@ -82,42 +88,82 @@
   });
 
   {% if weather and googleMapsApiKey and weatherMapLat and weatherMapLon %}
-  window.initWeatherMap = function initWeatherMap() {
-    const position = { lat: {{ weatherMapLat }}, lng: {{ weatherMapLon }} };
-    const map = new google.maps.Map(document.getElementById('weather-map'), {
-      center: position,
-      zoom: 15,
-      mapTypeControl: false,
-      streetViewControl: false,
-    });
+  const windMarkers = [
+    {
+      lat: {{ weatherMapLat }},
+      lon: {{ weatherMapLon }},
+      windDirection: {{ weather.windDirection }},
+      windSpeedMph: {{ weather.windSpeedMph }},
+      label: 'Me',
+      fillColor: '#ff0000',
+      strokeColor: '#b71c1c',
+    },
+    {% for station in referenceStations %}
+    {
+      lat: {{ station.lat }},
+      lon: {{ station.lon }},
+      windDirection: {{ station.windDirection }},
+      windSpeedMph: {{ station.windSpeedMph }},
+      label: {{ station.name | dump | safe }},
+      fillColor: '{{ "#1a73e8" if station.group == "derby" else "#2e7d32" }}',
+      strokeColor: '{{ "#0b3d91" if station.group == "derby" else "#1b4d20" }}',
+    },
+    {% endfor %}
+  ];
 
-    // winddir is the compass bearing the wind is blowing FROM; rotate 180deg
-    // so the arrow points in the direction the wind is blowing TOWARD.
-    const rotation = ({{ weather.windDirection }} + 180) % 360;
+  const parkPoints = [
+    { lat: {{ parks.derby.lat }}, lng: {{ parks.derby.lon }} },
+    { lat: {{ parks.brommer.lat }}, lng: {{ parks.brommer.lon }} },
+  ];
+
+  // Higher wind speed -> bigger arrow, capped so gusty readings don't dominate the map.
+  function arrowScale(windSpeedMph) {
+    return Math.min(1 + windSpeedMph * 0.15, 3.5);
+  }
+
+  function addWindMarker(map, marker) {
+    const position = { lat: marker.lat, lng: marker.lon };
+    // windDirection is the compass bearing the wind is blowing FROM; rotate
+    // 180deg so the arrow points in the direction the wind is blowing TOWARD.
+    const rotation = (marker.windDirection + 180) % 360;
 
     new google.maps.Marker({
       position,
       map,
       icon: {
         path: 'M 0,-10 L 6,8 L 0,4 L -6,8 Z',
-        fillColor: '#ff0000',
+        fillColor: marker.fillColor,
         fillOpacity: 1,
-        strokeColor: '#b71c1c',
+        strokeColor: marker.strokeColor,
         strokeWeight: 1,
-        scale: 1.5,
+        scale: arrowScale(marker.windSpeedMph),
         rotation,
         anchor: new google.maps.Point(0, 0),
         labelOrigin: new google.maps.Point(0, -18),
       },
       label: {
-        text: '{{ weather.windDirection }}° · {{ weather.windSpeedMph }} mph',
+        text: marker.windDirection + '° · ' + marker.windSpeedMph + ' mph',
         color: '#202020',
         fontSize: '13px',
         fontWeight: 'bold',
         className: 'weather-map-label',
       },
-      title: 'Wind direction (blowing toward)',
+      title: marker.label + ': wind direction (blowing toward)',
     });
+
+    return position;
+  }
+
+  window.initWeatherMap = function initWeatherMap() {
+    const map = new google.maps.Map(document.getElementById('weather-map'), {
+      mapTypeControl: false,
+      streetViewControl: false,
+    });
+
+    const bounds = new google.maps.LatLngBounds();
+    windMarkers.forEach((marker) => bounds.extend(addWindMarker(map, marker)));
+    parkPoints.forEach((point) => bounds.extend(point));
+    map.fitBounds(bounds, 40);
   };
   {% endif %}
 </script>

@@ -5,8 +5,8 @@ import express from 'express';
 import type { Router, Request, Response } from 'express';
 import { marked } from 'marked';
 import db from '../db/index.ts';
-import { getCurrentWeather } from '../weather.ts';
-import type { WeatherReading } from '../weather.ts';
+import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
+import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 
@@ -42,6 +42,13 @@ router.get('/weather', async (req: Request, res: Response) => {
   const weatherMapLat = process.env.WEATHER_MAP_LAT ? Number(process.env.WEATHER_MAP_LAT) : null;
   const weatherMapLon = process.env.WEATHER_MAP_LON ? Number(process.env.WEATHER_MAP_LON) : null;
 
+  const referenceStations = (await Promise.all(
+    REFERENCE_STATIONS.map(async (station) => {
+      const reading = await getPublicStationReading(station.slug);
+      return reading && { ...reading, group: station.group };
+    })
+  )).filter((s): s is PublicStationReading & { group: 'derby' | 'brommer' } => Boolean(s));
+
   res.render('weather.njk', {
     weather,
     weatherError,
@@ -51,6 +58,8 @@ router.get('/weather', async (req: Request, res: Response) => {
     googleMapsApiKey,
     weatherMapLat,
     weatherMapLon,
+    referenceStations,
+    parks: PARKS,
   });
 });
 
