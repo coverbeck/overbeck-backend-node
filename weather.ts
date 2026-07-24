@@ -114,6 +114,10 @@ export async function getPublicStationReading(slug: string): Promise<PublicStati
       return null;
     }
 
+    if (typeof device.lastData.winddir !== 'number' || typeof device.lastData.windspeedmph !== 'number') {
+      return null;
+    }
+
     return {
       name: device.info.name,
       lat: device.info.coords.coords.lat,
