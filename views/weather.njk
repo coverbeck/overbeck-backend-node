@@ -42,7 +42,14 @@
   Data screen scraped from
   <a href="https://www.santacruzca.gov/Government/City-Departments/Water-Department/Your-Water/Weekly-Water-Conditions">here</a>.
 </p>
-<p>Last checked: {{ lastChecked }}</p>
+<p>Most recent data: {{ lastChecked }}</p>
+{% if lochLomondCheckin %}
+  {% if lochLomondCheckin.status == 'ok' %}
+<p>Last checked: {{ lochLomondCheckin.checkedAtDate }}</p>
+  {% else %}
+<p>Error checking for new data on {{ lochLomondCheckin.checkedAtDate }}: {{ lochLomondCheckin.message }}</p>
+  {% endif %}
+{% endif %}
 {% endblock %}
 
 {% block head %}

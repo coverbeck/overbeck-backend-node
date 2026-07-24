@@ -62,4 +62,13 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS job_checkins (
+    job_name TEXT PRIMARY KEY,
+    checked_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT
+  )
+`);
+
 export default db;

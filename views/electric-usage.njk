@@ -5,12 +5,19 @@
 {% block content %}
 <h1>Electric &amp; Gas Usage</h1>
 <p>PG&amp;E usage data, by billing period.</p>
+{% if electricUsageCheckin %}
+  {% if electricUsageCheckin.status == 'ok' %}
+<p>Last checked: {{ electricUsageCheckin.checkedAtDate }}</p>
+  {% else %}
+<p>Error checking for new data on {{ electricUsageCheckin.checkedAtDate }}: {{ electricUsageCheckin.message }}</p>
+  {% endif %}
+{% endif %}
 
 <h2>Electric</h2>
 <div style="max-width: 900px">
   <canvas id="electric-chart"></canvas>
 </div>
-<p>Last checked: {{ lastElectric }}</p>
+<p>Most recent data: {{ lastElectric }}</p>
 
 <h2>Electric by Day</h2>
 <div class="period-select-row">
@@ -31,7 +38,7 @@
 <div style="max-width: 900px">
   <canvas id="gas-chart"></canvas>
 </div>
-<p>Last checked: {{ lastGas }}</p>
+<p>Most recent data: {{ lastGas }}</p>
 {% endblock %}
 
 {% block head %}

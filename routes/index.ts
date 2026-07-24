@@ -55,6 +55,7 @@ router.get('/weather', async (req: Request, res: Response) => {
     labels: readings.map((r) => r.recording_date),
     values: readings.map((r) => r.percent_full),
     lastChecked: readings.length ? readings[readings.length - 1].recording_date : null,
+    lochLomondCheckin: getJobCheckin('loch-lomond'),
     googleMapsApiKey,
     weatherMapLat,
     weatherMapLon,
@@ -90,6 +91,29 @@ interface PeriodWindow {
 
 function todayPacific(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+
+interface JobCheckinRow {
+  checked_at: string;
+  status: string;
+  message: string | null;
+}
+
+interface JobCheckin {
+  checkedAtDate: string;
+  status: string;
+  message: string | null;
+}
+
+function getJobCheckin(jobName: string): JobCheckin | null {
+  const row = db.prepare(
+    'SELECT checked_at, status, message FROM job_checkins WHERE job_name = ?'
+  ).get(jobName) as JobCheckinRow | undefined;
+  if (!row) return null;
+
+  const checkedAtDate = new Date(`${row.checked_at.replace(' ', 'T')}Z`)
+    .toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  return { checkedAtDate, status: row.status, message: row.message };
 }
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -271,6 +295,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     electricDailyCost: electricDaily.map((r) => r.cost),
     lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
     lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
+    electricUsageCheckin: getJobCheckin('electric-usage'),
   });
 });
 
@@ -352,6 +377,37 @@ router.post('/api/loch-lomond', requireAuth, (req: Request, res: Response) => {
   }
 
   res.status(201).json({ duplicate: false, recordingDate, percentFull, waterLevel, dailyProduction });
+});
+
+const JOB_NAME_PATTERN = /^[a-z0-9-]+$/;
+
+const upsertJobCheckin = db.prepare(`
+  INSERT INTO job_checkins (job_name, checked_at, status, message)
+  VALUES (?, datetime('now'), ?, ?)
+  ON CONFLICT(job_name) DO UPDATE SET
+    checked_at = excluded.checked_at,
+    status = excluded.status,
+    message = excluded.message
+`);
+
+router.post('/api/job-checkins', requireAuth, (req: Request, res: Response) => {
+  const { jobName, status, message } = req.body ?? {};
+
+  if (typeof jobName !== 'string' || !JOB_NAME_PATTERN.test(jobName)) {
+    res.status(400).json({ error: 'jobName must be a non-empty lowercase alphanumeric/hyphen string' });
+    return;
+  }
+  if (status !== 'ok' && status !== 'error') {
+    res.status(400).json({ error: 'status must be "ok" or "error"' });
+    return;
+  }
+  if (message !== undefined && message !== null && typeof message !== 'string') {
+    res.status(400).json({ error: 'message must be a string if provided' });
+    return;
+  }
+
+  upsertJobCheckin.run(jobName, status, message ?? null);
+  res.status(200).json({ jobName, status, message: message ?? null });
 });
 
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
