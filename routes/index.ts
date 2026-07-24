@@ -54,7 +54,7 @@ router.get('/weather', async (req: Request, res: Response) => {
     weatherError,
     labels: readings.map((r) => r.recording_date),
     values: readings.map((r) => r.percent_full),
-    lastChecked: readings.length ? readings[readings.length - 1].recording_date : null,
+    lastChecked: readings.length ? formatFriendlyDate(readings[readings.length - 1].recording_date) : null,
     lochLomondCheckin: getJobCheckin('loch-lomond'),
     googleMapsApiKey,
     weatherMapLat,
@@ -113,7 +113,7 @@ function getJobCheckin(jobName: string): JobCheckin | null {
 
   const checkedAtDate = new Date(`${row.checked_at.replace(' ', 'T')}Z`)
     .toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  return { checkedAtDate, status: row.status, message: row.message };
+  return { checkedAtDate: formatFriendlyDate(checkedAtDate), status: row.status, message: row.message };
 }
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -121,6 +121,15 @@ const MONTH_FULL = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// e.g. "Friday, July 24". Dates are treated as plain calendar days (parsed as
+// UTC) since they carry no time-of-day/timezone meaning here.
+function formatFriendlyDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const weekday = WEEKDAY_FULL[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `${weekday}, ${MONTH_FULL[month - 1]} ${day}`;
+}
 
 // Counts how many days of [startDate, endDate] (inclusive) fall in each calendar month,
 // in chronological order. Dates are treated as plain calendar days (parsed as UTC) since
@@ -293,8 +302,8 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
     electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),
     electricDailyCost: electricDaily.map((r) => r.cost),
-    lastElectric: electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
-    lastGas: gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
+    lastElectric: electricDaily.length ? formatFriendlyDate(electricDaily[electricDaily.length - 1].usage_date) : null,
+    lastGas: gasDaily.length ? formatFriendlyDate(gasDaily[gasDaily.length - 1].usage_date) : null,
     electricUsageCheckin: getJobCheckin('electric-usage'),
   });
 });
