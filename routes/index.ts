@@ -172,7 +172,7 @@ function formatFullLabel(startDate: string, endDate: string): string {
 // PG&E's own bill timeIntervals overlap by a day at each boundary (bill N's end_date is
 // one day after bill N+1's start_date), so periods are chained using each other's start_date
 // rather than each period's own end_date, which would double-count the boundary day.
-function buildPeriodWindows(periods: BillingPeriodRow[]): PeriodWindow[] {
+function buildPeriodWindows(periods: BillingPeriodRow[], lastDataDate: string | null): PeriodWindow[] {
   if (periods.length === 0) return [];
 
   const windows: PeriodWindow[] = periods.map((p, i) => {
@@ -188,9 +188,13 @@ function buildPeriodWindows(periods: BillingPeriodRow[]): PeriodWindow[] {
   const lastEndDate = periods[periods.length - 1].end_date;
   const today = todayPacific();
   if (lastEndDate < today) {
+    // Label the in-progress period through the last date we actually have data
+    // for, not through today — PG&E's data (especially gas) can lag a day or
+    // more behind the calendar date this page happens to be checked on.
+    const labelEndDate = lastDataDate && lastDataDate > lastEndDate ? lastDataDate : lastEndDate;
     windows.push({
-      shortLabel: formatShortLabel(lastEndDate, today),
-      fullLabel: `${formatFullLabel(lastEndDate, today)} (in progress)`,
+      shortLabel: formatShortLabel(lastEndDate, labelEndDate),
+      fullLabel: `${formatFullLabel(lastEndDate, labelEndDate)} (in progress)`,
       windowStart: lastEndDate,
       windowEnd: null,
     });
@@ -247,7 +251,12 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     'SELECT start_date, end_date FROM billing_periods ORDER BY start_date ASC'
   ).all() as BillingPeriodRow[];
 
-  const windows = buildPeriodWindows(billingPeriods);
+  const lastDataDate = [
+    electricDaily.length ? electricDaily[electricDaily.length - 1].usage_date : null,
+    gasDaily.length ? gasDaily[gasDaily.length - 1].usage_date : null,
+  ].filter((d): d is string => d !== null).sort().at(-1) ?? null;
+
+  const windows = buildPeriodWindows(billingPeriods, lastDataDate);
 
   const periodRows = windows.map((window) => {
     let importKwh = 0;
