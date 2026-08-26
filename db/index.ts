@@ -63,6 +63,18 @@ db.exec(`
 `);
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS solar_generation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    generation_kwh REAL NOT NULL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(generation_date, start_time)
+  )
+`);
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS job_checkins (
     job_name TEXT PRIMARY KEY,
     checked_at TEXT NOT NULL,

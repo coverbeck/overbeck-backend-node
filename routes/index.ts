@@ -603,6 +603,74 @@ router.post('/api/billing-periods', requireAuth, (req: Request, res: Response) =
   });
 });
 
+interface SolarReadingInput {
+  generationDate: string;
+  startTime: string;
+  endTime: string;
+  generationKwh: number;
+}
+
+function isSolarReading(reading: unknown): reading is SolarReadingInput {
+  if (typeof reading !== 'object' || reading === null) return false;
+  const r = reading as Record<string, unknown>;
+  return (
+    typeof r.generationDate === 'string' && USAGE_DATE_PATTERN.test(r.generationDate) &&
+    typeof r.startTime === 'string' && r.startTime.length > 0 &&
+    typeof r.endTime === 'string' && r.endTime.length > 0 &&
+    isFiniteNumber(r.generationKwh)
+  );
+}
+
+const insertSolarReading = db.prepare(
+  'INSERT OR IGNORE INTO solar_generation (generation_date, start_time, end_time, generation_kwh) VALUES (?, ?, ?, ?)'
+);
+
+const insertSolarReadings = db.transaction((readings: SolarReadingInput[]) => {
+  let inserted = 0;
+  for (const r of readings) {
+    if (insertSolarReading.run(r.generationDate, r.startTime, r.endTime, r.generationKwh).changes > 0) {
+      inserted++;
+    }
+  }
+  return inserted;
+});
+
+router.post('/api/solar-generation', requireAuth, (req: Request, res: Response) => {
+  const { readings } = (req.body ?? {}) as { readings?: unknown };
+
+  if (!Array.isArray(readings)) {
+    res.status(400).json({ error: 'readings must be an array' });
+    return;
+  }
+
+  for (const reading of readings) {
+    if (!isSolarReading(reading)) {
+      res.status(400).json({ error: 'invalid solar reading', reading });
+      return;
+    }
+  }
+
+  const inserted = readings.length ? insertSolarReadings(readings as SolarReadingInput[]) : 0;
+
+  res.status(201).json({
+    received: readings.length,
+    inserted,
+    duplicates: readings.length - inserted,
+  });
+});
+
+router.get('/api/solar-generation/latest', requireAuth, (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+
+  const latest = db.prepare(
+    'SELECT generation_date, start_time FROM solar_generation ORDER BY generation_date DESC, start_time DESC LIMIT 1'
+  ).get() as { generation_date: string; start_time: string } | undefined;
+
+  res.json({
+    latest: latest ? { generationDate: latest.generation_date, startTime: latest.start_time } : null,
+  });
+});
+
 router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Response) => {
   const date = req.query.date;
   if (typeof date !== 'string' || !USAGE_DATE_PATTERN.test(date)) {
