@@ -671,6 +671,16 @@ router.get('/api/solar-generation/latest', requireAuth, (req: Request, res: Resp
   });
 });
 
+router.get('/api/solar-generation/dates', requireAuth, (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+
+  const rows = db.prepare(
+    'SELECT DISTINCT generation_date FROM solar_generation ORDER BY generation_date'
+  ).all() as { generation_date: string }[];
+
+  res.json({ dates: rows.map((r) => r.generation_date) });
+});
+
 router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Response) => {
   const date = req.query.date;
   if (typeof date !== 'string' || !USAGE_DATE_PATTERN.test(date)) {
