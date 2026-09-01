@@ -78,7 +78,7 @@
   // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
   // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
   // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -91,13 +91,6 @@
             yAxisID: 'y',
             backgroundColor: netArr.map((v) => (v >= 0 ? NET_IMPORT_COLOR : NET_EXPORT_COLOR)),
           },
-          ...(solarArr ? [{
-            type: 'bar',
-            label: 'Solar Generation (kWh)',
-            data: solarArr,
-            yAxisID: 'y',
-            backgroundColor: SOLAR_COLOR,
-          }] : []),
           {
             type: 'line',
             label: 'Cost ($)',
@@ -121,12 +114,11 @@
             labels: {
               generateLabels: (chart) => {
                 const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                const netEntries = [
+                return [
                   { text: 'Net import (used more than exported)', fillStyle: NET_IMPORT_COLOR, strokeStyle: NET_IMPORT_COLOR },
                   { text: 'Net export (exported more than used)', fillStyle: NET_EXPORT_COLOR, strokeStyle: NET_EXPORT_COLOR },
+                  base[1],
                 ];
-                const rest = base.filter((item) => item.text !== 'Net Grid Usage (kWh)');
-                return [...netEntries, ...rest];
               },
             },
           },
@@ -137,11 +129,7 @@
                 return tooltipTitleFn ? tooltipTitleFn(label) : label;
               },
               label: (ctx) => {
-                const datasetLabel = ctx.dataset.label;
-                if (datasetLabel === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
-                if (datasetLabel === 'Solar Generation (kWh)') {
-                  return ctx.parsed.y === null ? 'Solar generation: no data' : `Solar generation: ${ctx.parsed.y.toFixed(1)} kWh`;
-                }
+                if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
                 const i = ctx.dataIndex;
                 const net = ctx.parsed.y;
                 return [
@@ -156,6 +144,105 @@
         scales: {
           x: { type: 'category', ticks: { maxRotation: 0, minRotation: 0, autoSkip: autoSkipTicks } },
           y: { type: 'linear', position: 'left', title: { display: true, text: 'Net kWh (import - export)' } },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: '$' },
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+  }
+
+  // Stacked "where did today's electricity come from" chart, used only for the daily view.
+  // Grid Import + Solar Used On-Site stack to show total home consumption; Exported to Grid
+  // is a separate line (not stacked/negative) since it's energy that left the system, not
+  // part of what was consumed. Avoids treating solar generation as an "inverse" of import,
+  // which read as confusing when solar was a third same-style bar next to a signed net bar.
+  function makeConsumptionStackChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, solarArr, autoSkipTicks, onBarClick, tooltipTitleFn) {
+    const selfConsumedArr = solarArr.map((solar, i) => (solar === null ? null : Math.max(0, solar - exportArr[i])));
+
+    return new Chart(document.getElementById(canvasId), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Grid Import (kWh)',
+            data: importArr,
+            yAxisID: 'y',
+            stack: 'consumption',
+            backgroundColor: NET_IMPORT_COLOR,
+          },
+          {
+            type: 'bar',
+            label: 'Solar Used On-Site (kWh)',
+            data: selfConsumedArr,
+            yAxisID: 'y',
+            stack: 'consumption',
+            backgroundColor: SOLAR_COLOR,
+          },
+          {
+            type: 'line',
+            label: 'Exported to Grid (kWh)',
+            data: exportArr,
+            yAxisID: 'y',
+            borderColor: NET_EXPORT_COLOR,
+            backgroundColor: NET_EXPORT_COLOR,
+          },
+          {
+            type: 'line',
+            label: 'Cost ($)',
+            data: costArr,
+            yAxisID: 'y1',
+            borderColor: '#e15759',
+            backgroundColor: '#e15759',
+          },
+        ],
+      },
+      options: {
+        onClick: onBarClick ? (evt, _elements, chart) => {
+          const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+          if (points.length > 0) onBarClick(points[0].index);
+        } : undefined,
+        onHover: onBarClick ? (evt, elements) => {
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+        } : undefined,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                const label = fullLabels[items[0].dataIndex];
+                return tooltipTitleFn ? tooltipTitleFn(label) : label;
+              },
+              label: (ctx) => {
+                const label = ctx.dataset.label;
+                if (label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+                if (label === 'Exported to Grid (kWh)') return `Exported: ${ctx.parsed.y.toFixed(1)} kWh`;
+                if (label === 'Grid Import (kWh)') return `Grid import: ${ctx.parsed.y.toFixed(1)} kWh`;
+                if (label === 'Solar Used On-Site (kWh)') {
+                  return ctx.parsed.y === null ? 'Solar used on-site: no data' : `Solar used on-site: ${ctx.parsed.y.toFixed(1)} kWh`;
+                }
+                return undefined;
+              },
+              footer: (items) => {
+                const i = items[0].dataIndex;
+                const solar = solarArr[i];
+                if (solar === null) {
+                  return `Total used: ${importArr[i].toFixed(1)} kWh (no solar data this day)`;
+                }
+                const selfConsumed = selfConsumedArr[i];
+                const totalConsumption = importArr[i] + selfConsumed;
+                const pct = totalConsumption > 0 ? (selfConsumed / totalConsumption) * 100 : 0;
+                return `Total used: ${totalConsumption.toFixed(1)} kWh (${pct.toFixed(0)}% from solar)`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: { type: 'category', stacked: true, ticks: { maxRotation: 0, minRotation: 0, autoSkip: autoSkipTicks } },
+          y: { type: 'linear', stacked: true, position: 'left', title: { display: true, text: 'kWh' } },
           y1: {
             type: 'linear',
             position: 'right',
@@ -314,9 +401,9 @@
   function renderDailyChart(index) {
     if (dailyChart) dailyChart.destroy();
     const { labels, fullLabels, importArr, exportArr, costArr, solarArr } = dailyDataForPeriod(index);
-    dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true, (i) => {
+    dailyChart = makeConsumptionStackChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, solarArr, true, (i) => {
       renderHourlyChart(fullLabels[i]);
-    }, formatWeekdayDateLabel, solarArr);
+    }, formatWeekdayDateLabel);
     renderDailySummary(importArr, exportArr, costArr);
     if (fullLabels.length > 0) renderHourlyChart(fullLabels[fullLabels.length - 1]);
   }
