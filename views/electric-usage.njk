@@ -60,9 +60,13 @@
   const electricDailyImportKwh = {{ electricDailyImportKwh | dump | safe }};
   const electricDailyExportKwh = {{ electricDailyExportKwh | dump | safe }};
   const electricDailyCost = {{ electricDailyCost | dump | safe }};
+  const solarDailyDates = {{ solarDailyDates | dump | safe }};
+  const solarDailyKwh = {{ solarDailyKwh | dump | safe }};
+  const solarKwhByDate = new Map(solarDailyDates.map((date, i) => [date, solarDailyKwh[i]]));
 
   const NET_IMPORT_COLOR = '#4e79a7';
   const NET_EXPORT_COLOR = '#59a14f';
+  const SOLAR_COLOR = '#f28e2b';
   const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   function formatDayLabel(dateStr) {
@@ -74,7 +78,7 @@
   // period/day was net-imported (drew more from the grid) or net-exported (sent more to it),
   // matching PG&E's own NEM chart. Raw import/export/cost detail moves into the tooltip so
   // nothing is lost relative to a two-bar view. Shared by the per-period and per-day charts.
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -87,6 +91,13 @@
             yAxisID: 'y',
             backgroundColor: netArr.map((v) => (v >= 0 ? NET_IMPORT_COLOR : NET_EXPORT_COLOR)),
           },
+          ...(solarArr ? [{
+            type: 'bar',
+            label: 'Solar Generation (kWh)',
+            data: solarArr,
+            yAxisID: 'y',
+            backgroundColor: SOLAR_COLOR,
+          }] : []),
           {
             type: 'line',
             label: 'Cost ($)',
@@ -110,11 +121,12 @@
             labels: {
               generateLabels: (chart) => {
                 const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                return [
+                const netEntries = [
                   { text: 'Net import (used more than exported)', fillStyle: NET_IMPORT_COLOR, strokeStyle: NET_IMPORT_COLOR },
                   { text: 'Net export (exported more than used)', fillStyle: NET_EXPORT_COLOR, strokeStyle: NET_EXPORT_COLOR },
-                  base[1],
                 ];
+                const rest = base.filter((item) => item.text !== 'Net Grid Usage (kWh)');
+                return [...netEntries, ...rest];
               },
             },
           },
@@ -125,7 +137,11 @@
                 return tooltipTitleFn ? tooltipTitleFn(label) : label;
               },
               label: (ctx) => {
-                if (ctx.dataset.label === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+                const datasetLabel = ctx.dataset.label;
+                if (datasetLabel === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+                if (datasetLabel === 'Solar Generation (kWh)') {
+                  return ctx.parsed.y === null ? 'Solar generation: no data' : `Solar generation: ${ctx.parsed.y.toFixed(1)} kWh`;
+                }
                 const i = ctx.dataIndex;
                 const net = ctx.parsed.y;
                 return [
@@ -214,6 +230,7 @@
     const importArr = [];
     const exportArr = [];
     const costArr = [];
+    const solarArr = [];
     for (let i = 0; i < electricDailyDates.length; i++) {
       const date = electricDailyDates[i];
       if (date >= start && (end === null || date < end)) {
@@ -222,9 +239,10 @@
         importArr.push(electricDailyImportKwh[i]);
         exportArr.push(electricDailyExportKwh[i]);
         costArr.push(electricDailyCost[i]);
+        solarArr.push(solarKwhByDate.has(date) ? solarKwhByDate.get(date) : null);
       }
     }
-    return { labels, fullLabels, importArr, exportArr, costArr };
+    return { labels, fullLabels, importArr, exportArr, costArr, solarArr };
   }
 
   const periodSelect = document.getElementById('period-select');
@@ -295,10 +313,10 @@
   let dailyChart = null;
   function renderDailyChart(index) {
     if (dailyChart) dailyChart.destroy();
-    const { labels, fullLabels, importArr, exportArr, costArr } = dailyDataForPeriod(index);
+    const { labels, fullLabels, importArr, exportArr, costArr, solarArr } = dailyDataForPeriod(index);
     dailyChart = makeNetUsageChart('daily-chart', labels, fullLabels, importArr, exportArr, costArr, true, (i) => {
       renderHourlyChart(fullLabels[i]);
-    }, formatWeekdayDateLabel);
+    }, formatWeekdayDateLabel, solarArr);
     renderDailySummary(importArr, exportArr, costArr);
     if (fullLabels.length > 0) renderHourlyChart(fullLabels[fullLabels.length - 1]);
   }

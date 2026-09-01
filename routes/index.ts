@@ -77,6 +77,11 @@ interface GasDailyRow {
   cost: number;
 }
 
+interface SolarDailyRow {
+  generation_date: string;
+  generation_kwh: number;
+}
+
 interface BillingPeriodRow {
   start_date: string;
   end_date: string;
@@ -247,6 +252,13 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     'SELECT usage_date, therms, cost FROM gas_usage ORDER BY usage_date'
   ).all() as GasDailyRow[];
 
+  const solarDaily = db.prepare(`
+    SELECT generation_date, SUM(generation_kwh) AS generation_kwh
+    FROM solar_generation
+    GROUP BY generation_date
+    ORDER BY generation_date
+  `).all() as SolarDailyRow[];
+
   const billingPeriods = db.prepare(
     'SELECT start_date, end_date FROM billing_periods ORDER BY start_date ASC'
   ).all() as BillingPeriodRow[];
@@ -311,6 +323,8 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
     electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),
     electricDailyCost: electricDaily.map((r) => r.cost),
+    solarDailyDates: solarDaily.map((r) => r.generation_date),
+    solarDailyKwh: solarDaily.map((r) => r.generation_kwh),
     lastElectric: electricDaily.length ? formatFriendlyDate(electricDaily[electricDaily.length - 1].usage_date) : null,
     lastGas: gasDaily.length ? formatFriendlyDate(gasDaily[gasDaily.length - 1].usage_date) : null,
     electricUsageCheckin: getJobCheckin('electric-usage'),
