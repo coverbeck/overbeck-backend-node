@@ -54,6 +54,7 @@
   const electricImportByPeriod = {{ electricImportByPeriod | dump | safe }};
   const electricExportByPeriod = {{ electricExportByPeriod | dump | safe }};
   const electricCostByPeriod = {{ electricCostByPeriod | dump | safe }};
+  const solarKwhByPeriod = {{ solarKwhByPeriod | dump | safe }};
   const gasThermsByPeriod = {{ gasThermsByPeriod | dump | safe }};
   const gasCostByPeriod = {{ gasCostByPeriod | dump | safe }};
   const electricDailyDates = {{ electricDailyDates | dump | safe }};
@@ -227,7 +228,10 @@
     electricImportByPeriod,
     electricExportByPeriod,
     electricCostByPeriod,
-    false
+    false,
+    undefined,
+    undefined,
+    solarKwhByPeriod
   );
 
   function dailyDataForPeriod(index) {
@@ -314,7 +318,7 @@
     if (hourlyChart) hourlyChart.destroy();
     const labels = data.startTime.map(formatHourLabel);
     const fullLabels = data.startTime.map((t, i) => `${date} ${t}–${data.endTime[i]}`);
-    hourlyChart = makeNetUsageChart('hourly-chart', labels, fullLabels, data.importKwh, data.exportKwh, data.cost, true);
+    hourlyChart = makeNetUsageChart('hourly-chart', labels, fullLabels, data.importKwh, data.exportKwh, data.cost, true, undefined, undefined, data.solarKwh);
     document.getElementById('hourly-heading').textContent = `Electric by Hour — ${formatHeadingDayLabel(date)}`;
   }
 

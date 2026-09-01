@@ -295,6 +295,15 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
       }
     }
 
+    let solarKwh = 0;
+    let hasSolar = false;
+    for (const row of solarDaily) {
+      if (inWindow(row.generation_date, window)) {
+        solarKwh += row.generation_kwh;
+        hasSolar = true;
+      }
+    }
+
     return {
       shortLabel: window.shortLabel,
       fullLabel: window.fullLabel,
@@ -305,6 +314,9 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
       electricCost: electricCostSum,
       therms,
       gasCost: gasCostSum,
+      // null (not 0) when this period has no solar data yet, distinguishing "not backfilled"
+      // from "generated zero" — same convention as the daily solarKwhByDate lookup.
+      solarKwh: hasSolar ? solarKwh : null,
       hasData: hasElectric || hasGas,
     };
   }).filter((row) => row.hasData);
@@ -319,6 +331,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     electricCostByPeriod: periodRows.map((r) => r.electricCost),
     gasThermsByPeriod: periodRows.map((r) => r.therms),
     gasCostByPeriod: periodRows.map((r) => r.gasCost),
+    solarKwhByPeriod: periodRows.map((r) => r.solarKwh),
     electricDailyDates: electricDaily.map((r) => r.usage_date),
     electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
     electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),
@@ -706,6 +719,16 @@ router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Res
     'SELECT start_time, end_time, import_kwh, export_kwh, cost FROM electric_usage WHERE usage_date = ? ORDER BY start_time'
   ).all(date) as { start_time: string; end_time: string; import_kwh: number; export_kwh: number; cost: number }[];
 
+  // solar_generation is stored at 5-minute granularity; roll up into the same hour buckets
+  // (start_time "HH:00") that electric_usage already uses, so the two align by index.
+  const solarByHourRows = db.prepare(`
+    SELECT substr(start_time, 1, 2) || ':00' AS hour_start, SUM(generation_kwh) AS generation_kwh
+    FROM solar_generation
+    WHERE generation_date = ?
+    GROUP BY hour_start
+  `).all(date) as { hour_start: string; generation_kwh: number }[];
+  const solarKwhByHour = new Map(solarByHourRows.map((r) => [r.hour_start, r.generation_kwh]));
+
   res.json({
     date,
     startTime: rows.map((r) => r.start_time),
@@ -713,6 +736,8 @@ router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Res
     importKwh: rows.map((r) => r.import_kwh),
     exportKwh: rows.map((r) => r.export_kwh),
     cost: rows.map((r) => r.cost),
+    // null (not 0) when this hour has no solar data yet, same convention as the daily/period rollups.
+    solarKwh: rows.map((r) => solarKwhByHour.get(r.start_time) ?? null),
   });
 });
 
