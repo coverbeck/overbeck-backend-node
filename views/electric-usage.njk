@@ -66,7 +66,8 @@
 
   const NET_IMPORT_COLOR = '#4e79a7';
   const NET_EXPORT_COLOR = '#59a14f';
-  const SOLAR_COLOR = '#f28e2b';
+  const SOLAR_COLOR = '#f4c430';
+  const COST_COLOR = '#d62728';
   const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   function formatDayLabel(dateStr) {
@@ -112,8 +113,8 @@
             label: 'Cost ($)',
             data: costArr,
             yAxisID: 'y1',
-            borderColor: '#e15759',
-            backgroundColor: '#e15759',
+            borderColor: COST_COLOR,
+            backgroundColor: COST_COLOR,
           },
         ],
       },
@@ -194,8 +195,8 @@
             label: 'Cost ($)',
             data: costArr,
             yAxisID: 'y1',
-            borderColor: '#e15759',
-            backgroundColor: '#e15759',
+            borderColor: COST_COLOR,
+            backgroundColor: COST_COLOR,
           },
         ],
       },
