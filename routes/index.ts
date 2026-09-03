@@ -701,11 +701,19 @@ router.get('/api/solar-generation/latest', requireAuth, (req: Request, res: Resp
 router.get('/api/solar-generation/dates', requireAuth, (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
 
+  // Counts (not just presence) so callers can tell a fully-backfilled date apart from
+  // one that only got a partial day's worth of readings (e.g. a date that was fetched
+  // while it was still "today" and never completed) — see fetch-enphase.js's
+  // completeness check, which skipped this distinction until 2026-09-03 and got a date
+  // permanently stuck with a partial day's data as a result.
   const rows = db.prepare(
-    'SELECT DISTINCT generation_date FROM solar_generation ORDER BY generation_date'
-  ).all() as { generation_date: string }[];
+    'SELECT generation_date, COUNT(*) AS count FROM solar_generation GROUP BY generation_date ORDER BY generation_date'
+  ).all() as { generation_date: string; count: number }[];
 
-  res.json({ dates: rows.map((r) => r.generation_date) });
+  res.json({
+    dates: rows.map((r) => r.generation_date),
+    counts: Object.fromEntries(rows.map((r) => [r.generation_date, r.count])),
+  });
 });
 
 router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Response) => {
