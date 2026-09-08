@@ -86,7 +86,7 @@
   // relative to a two-bar view. Shared by the per-period, per-day, and per-hour charts; solarArr
   // is optional and, when given, overlays generation as a thin line for context only (not part
   // of the net comparison itself).
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr) {
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr, showTotalCostInTooltip) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -157,6 +157,7 @@
                   `Net: ${net >= 0 ? 'imported' : 'exported'} ${Math.abs(net).toFixed(1)} kWh`,
                   `Import: ${importArr[i].toFixed(1)} kWh`,
                   `Export: ${exportArr[i].toFixed(1)} kWh`,
+                  ...(showTotalCostInTooltip ? [`Cost: $${costArr[i].toFixed(2)}`] : []),
                 ];
               },
             },
@@ -231,7 +232,8 @@
     false,
     undefined,
     undefined,
-    solarKwhByPeriod
+    solarKwhByPeriod,
+    true
   );
 
   function dailyDataForPeriod(index) {
