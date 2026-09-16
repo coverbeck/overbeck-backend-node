@@ -150,10 +150,12 @@
                 }
                 const i = ctx.dataIndex;
                 const net = ctx.parsed.y;
+                const solarValue = solarArr ? solarArr[i] : undefined;
                 return [
                   `Net: ${net >= 0 ? 'imported' : 'exported'} ${Math.abs(net).toFixed(1)} kWh`,
                   `Import: ${importArr[i].toFixed(1)} kWh`,
                   `Export: ${exportArr[i].toFixed(1)} kWh`,
+                  ...(solarArr ? [`Solar generation: ${solarValue === null ? 'no data' : solarValue.toFixed(1) + ' kWh'}`] : []),
                   ...(showTotalCostInTooltip ? [`Cost: $${costArr[i].toFixed(2)}`] : []),
                 ];
               },
