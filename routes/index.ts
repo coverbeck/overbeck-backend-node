@@ -9,6 +9,7 @@ import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS }
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
+import { computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -90,6 +91,7 @@ interface BillingPeriodRow {
 interface PeriodWindow {
   shortLabel: string;
   fullLabel: string;
+  rangeLabel: string;
   windowStart: string;
   windowEnd: string | null; // exclusive; null means open-ended (still in progress)
 }
@@ -174,6 +176,15 @@ function formatFullLabel(startDate: string, endDate: string): string {
   return `${format(startDate)} - ${format(endDate)}`;
 }
 
+// Compact form of formatFullLabel, e.g. "Jul 27 - Aug 27, 2026", for table cells.
+function formatRangeLabel(startDate: string, endDate: string): string {
+  const format = (dateStr: string) => {
+    const [, month, day] = dateStr.split('-').map(Number);
+    return `${MONTH_ABBR[month - 1]} ${day}`;
+  };
+  return `${format(startDate)} - ${format(endDate)}, ${endDate.slice(0, 4)}`;
+}
+
 // PG&E's own bill timeIntervals overlap by a day at each boundary (bill N's end_date is
 // one day after bill N+1's start_date), so periods are chained using each other's start_date
 // rather than each period's own end_date, which would double-count the boundary day.
@@ -185,6 +196,7 @@ function buildPeriodWindows(periods: BillingPeriodRow[], lastDataDate: string | 
     return {
       shortLabel: formatShortLabel(p.start_date, p.end_date),
       fullLabel: formatFullLabel(p.start_date, p.end_date),
+      rangeLabel: formatRangeLabel(p.start_date, p.end_date),
       windowStart: p.start_date,
       windowEnd: next ? next.start_date : p.end_date,
     };
@@ -200,6 +212,7 @@ function buildPeriodWindows(periods: BillingPeriodRow[], lastDataDate: string | 
     windows.push({
       shortLabel: formatShortLabel(lastEndDate, labelEndDate),
       fullLabel: `${formatFullLabel(lastEndDate, labelEndDate)} (in progress)`,
+      rangeLabel: formatRangeLabel(lastEndDate, labelEndDate),
       windowStart: lastEndDate,
       windowEnd: null,
     });
@@ -321,7 +334,41 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     };
   }).filter((row) => row.hasData);
 
+  const hourlyUsage = (db.prepare(`
+    SELECT usage_date, start_time, import_kwh, export_kwh
+    FROM electric_usage
+    WHERE usage_date >= ?
+    ORDER BY usage_date, start_time
+  `).all(RATES_EFFECTIVE_FROM) as { usage_date: string; start_time: string; import_kwh: number; export_kwh: number }[])
+    .map((r) => ({ usageDate: r.usage_date, startTime: r.start_time, importKwh: r.import_kwh, exportKwh: r.export_kwh }));
+
+  // Same 5-minute -> hour-bucket rollup as /api/electric-usage/hourly.
+  const solarHourlyRows = db.prepare(`
+    SELECT generation_date, substr(start_time, 1, 2) || ':00' AS hour_start, SUM(generation_kwh) AS generation_kwh
+    FROM solar_generation
+    WHERE generation_date >= ?
+    GROUP BY generation_date, hour_start
+  `).all(RATES_EFFECTIVE_FROM) as { generation_date: string; hour_start: string; generation_kwh: number }[];
+
+  const solarCountRows = db.prepare(`
+    SELECT generation_date, COUNT(*) AS count
+    FROM solar_generation
+    WHERE generation_date >= ?
+    GROUP BY generation_date
+  `).all(RATES_EFFECTIVE_FROM) as { generation_date: string; count: number }[];
+
+  const savingsRows = computeSolarSavings(
+    windows.map((w) => ({ label: w.rangeLabel, windowStart: w.windowStart, windowEnd: w.windowEnd })),
+    hourlyUsage,
+    new Map(solarHourlyRows.map((r) => [`${r.generation_date} ${r.hour_start}`, r.generation_kwh])),
+    new Map(solarCountRows.map((r) => [r.generation_date, r.count])),
+  ).reverse(); // newest first
+  const completeSavingsRows = savingsRows.filter((r) => r.savings !== null);
+
   res.render('electric-usage.njk', {
+    savingsRows,
+    savingsTotal: completeSavingsRows.reduce((sum, r) => sum + (r.savings ?? 0), 0),
+    savingsTotalPeriods: completeSavingsRows.length,
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
     periodWindowStarts: periodRows.map((r) => r.windowStart),

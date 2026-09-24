@@ -31,6 +31,53 @@
   <canvas id="hourly-chart"></canvas>
 </div>
 
+<h2>Solar Savings</h2>
+{% macro dollars(v) %}{{ '-' if v < 0 }}${{ (v if v >= 0 else -v).toFixed(2) }}{% endmacro %}
+{% if savingsRows.length %}
+<p>Estimated electric bill with and without the solar panels, on the same rate plan (E-TOU-C). Covers energy charges, baseline credit, PCIA, and tax; leaves out the fixed Base Services Charge and the generation credit, which roughly cancels 3CE's generation charge.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Billing period</th>
+      <th>Solar (kWh)</th>
+      <th>Exported (kWh)</th>
+      <th>Bill with solar</th>
+      <th>Bill without solar</th>
+      <th>Saved</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in savingsRows %}
+    <tr>
+      <td>{{ row.label }}{% if row.inProgress %} <span class="hint">(in progress)</span>{% endif %}</td>
+      {% if row.savings === null %}
+      <td>—</td>
+      <td>{{ row.exportKwh.toFixed(1) }}</td>
+      <td>{{ dollars(row.actualCost) }}</td>
+      <td colspan="2" class="hint">Solar data incomplete ({{ row.solarDays }} of {{ row.days }} days)</td>
+      {% else %}
+      <td>{{ row.solarKwh.toFixed(1) }}</td>
+      <td>{{ row.exportKwh.toFixed(1) }}</td>
+      <td>{{ dollars(row.actualCost) }}</td>
+      <td>{{ dollars(row.noSolarCost) }}</td>
+      <td><strong>{{ dollars(row.savings) }}</strong></td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <th colspan="5">Total ({{ savingsTotalPeriods }} period{{ 's' if savingsTotalPeriods != 1 }} with complete solar data)</th>
+      <th>{{ dollars(savingsTotal) }}</th>
+    </tr>
+  </tfoot>
+</table>
+</div>
+{% else %}
+<p>No billing periods since March 1, 2026 with usage data yet.</p>
+{% endif %}
+
 <h2>Natural Gas</h2>
 <div style="max-width: 900px">
   <canvas id="gas-chart"></canvas>

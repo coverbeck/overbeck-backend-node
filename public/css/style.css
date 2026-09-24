@@ -85,3 +85,33 @@ main {
   border-radius: 3px;
   white-space: nowrap;
 }
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #ddd;
+  text-align: right;
+}
+
+.data-table th:first-child,
+.data-table td:first-child {
+  text-align: left;
+}
+
+.data-table tbody td:first-child {
+  white-space: nowrap;
+}
+
+.data-table tfoot th {
+  border-top: 2px solid #999;
+  border-bottom: none;
+}
