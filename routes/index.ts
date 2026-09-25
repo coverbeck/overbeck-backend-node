@@ -9,7 +9,7 @@ import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS }
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
-import { computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
+import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -362,13 +362,15 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     hourlyUsage,
     new Map(solarHourlyRows.map((r) => [`${r.generation_date} ${r.hour_start}`, r.generation_kwh])),
     new Map(solarCountRows.map((r) => [r.generation_date, r.count])),
-  ).reverse(); // newest first
-  const completeSavingsRows = savingsRows.filter((r) => r.savings !== null);
+  );
+  // Newest first, for both the years and the periods within each year.
+  const nemYears = computeNemYears(savingsRows).reverse().map((y) => ({ ...y, rows: [...y.rows].reverse() }));
+  const settledNemYears = nemYears.filter((y) => !y.inProgress && y.savings !== null);
 
   res.render('electric-usage.njk', {
-    savingsRows,
-    savingsTotal: completeSavingsRows.reduce((sum, r) => sum + (r.savings ?? 0), 0),
-    savingsTotalPeriods: completeSavingsRows.length,
+    nemYears,
+    savingsTotal: settledNemYears.reduce((sum, y) => sum + (y.savings ?? 0), 0),
+    savingsTotalYears: settledNemYears.length,
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
     periodWindowStarts: periodRows.map((r) => r.windowStart),

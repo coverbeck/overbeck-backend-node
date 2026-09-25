@@ -9,9 +9,12 @@
 // and Mar 30-Apr 27, 2026) to within ~0.5%. Deliberately left out: PG&E's Generation
 // Credit and 3CE's generation charge, which roughly cancel each other (the credit backs
 // out the generation 3CE supplies), and the flat daily charge (Minimum Delivery Charge,
-// then Base Services Charge from March 2026), which doesn't vary with usage. Annual
-// True-Up effects (PG&E forfeits any year-end credit) are also out of scope for a
-// per-period number.
+// then Base Services Charge from March 2026), which doesn't vary with usage.
+//
+// Per-period numbers ignore NEM's annual True-Up, so computeNemYears settles each
+// True-Up year separately: the year's bill with solar is the larger of its summed
+// period bills and the minimum delivery charge (a year-end credit is forfeited, not
+// paid out). The no-solar side never drops that low, so it's just the sum.
 
 interface SeasonRates {
   peak: number; // $/kWh, 4-9pm every day
@@ -24,6 +27,7 @@ interface RatePeriod {
   winter: SeasonRates;
   baselineCredit: number; // $/kWh, applied to net usage up to the baseline allowance
   pcia: number; // $/kWh, 2018 vintage residential
+  minDeliveryPerDay: number; // $/day delivery minimum bill; 0 once the Base Services Charge replaced it
 }
 
 // Total bundled E-TOU-C rates from PG&E's Res_Inclu_TOU_*.xlsx rate tables. PCIA
@@ -36,6 +40,7 @@ const RATE_PERIODS: RatePeriod[] = [
     winter: { peak: 0.49312, offPeak: 0.46312 },
     baselineCredit: 0.10135,
     pcia: 0.0067,
+    minDeliveryPerDay: 0.39167,
   },
   {
     from: '2025-03-01',
@@ -43,6 +48,7 @@ const RATE_PERIODS: RatePeriod[] = [
     winter: { peak: 0.50086, offPeak: 0.47086 },
     baselineCredit: 0.10301,
     pcia: 0.0067,
+    minDeliveryPerDay: 0.40317,
   },
   {
     from: '2025-09-01',
@@ -50,6 +56,7 @@ const RATE_PERIODS: RatePeriod[] = [
     winter: { peak: 0.48974, offPeak: 0.45974 },
     baselineCredit: 0.10084,
     pcia: 0.0067,
+    minDeliveryPerDay: 0.40317,
   },
   {
     from: '2026-01-01',
@@ -57,6 +64,7 @@ const RATE_PERIODS: RatePeriod[] = [
     winter: { peak: 0.46460, offPeak: 0.43460 },
     baselineCredit: 0.09566,
     pcia: 0.03679,
+    minDeliveryPerDay: 0.40317,
   },
   {
     from: '2026-03-01',
@@ -64,6 +72,7 @@ const RATE_PERIODS: RatePeriod[] = [
     winter: { peak: 0.39757, offPeak: 0.36757 },
     baselineCredit: 0.08140,
     pcia: 0.03679,
+    minDeliveryPerDay: 0,
   },
 ];
 
@@ -115,6 +124,7 @@ export interface SavingsWindow {
 
 export interface SavingsRow {
   label: string;
+  windowStart: string;
   inProgress: boolean;
   days: number;
   solarDays: number; // days in the period with complete solar data
@@ -123,6 +133,7 @@ export interface SavingsRow {
   actualCost: number;
   noSolarCost: number | null;
   savings: number | null;
+  minDeliveryCost: number; // the period's delivery minimum bill, with tax
 }
 
 interface NetHour {
@@ -201,8 +212,12 @@ export function computeSolarSavings(
       noSolarCost = modelBill(noSolarHours);
     }
 
+    const minDeliveryCost = [...days].reduce(
+      (sum, d) => sum + RATE_PERIODS[ratePeriodIndexFor(d)].minDeliveryPerDay, 0) * (1 + CITY_TAX_RATE);
+
     rows.push({
       label: window.label,
+      windowStart: window.windowStart,
       inProgress: window.windowEnd === null,
       days: days.size,
       solarDays,
@@ -211,8 +226,74 @@ export function computeSolarSavings(
       actualCost,
       noSolarCost,
       savings: noSolarCost === null ? null : noSolarCost - actualCost,
+      minDeliveryCost,
     });
   }
 
   return rows;
+}
+
+// This account's True-Up statement comes in July: the last billing period of a NEM
+// year starts in late June, and the next year's first period starts in late July.
+const TRUE_UP_MONTH = 7;
+
+function trueUpYearFor(windowStart: string): number {
+  const year = Number(windowStart.slice(0, 4));
+  return Number(windowStart.slice(5, 7)) >= TRUE_UP_MONTH ? year + 1 : year;
+}
+
+export interface NemYear {
+  trueUpYear: number;
+  inProgress: boolean;
+  rows: SavingsRow[]; // oldest first
+  excludesCurrentPeriod: boolean; // totals leave out the in-progress period (incomplete solar data)
+  // False when the year's savings can't be settled: its first period predates our
+  // usage data, or some period lacks complete solar data.
+  complete: boolean;
+  solarKwh: number | null;
+  exportKwh: number;
+  periodTotal: number; // sum of the periods' modeled bills with solar
+  minDeliveryTotal: number;
+  trueUpCost: number; // what the year actually costs with solar, after True-Up
+  noSolarCost: number | null;
+  savings: number | null;
+}
+
+// Groups billing periods (oldest first) into NEM True-Up years, oldest first.
+export function computeNemYears(rows: SavingsRow[]): NemYear[] {
+  const byYear = new Map<number, SavingsRow[]>();
+  for (const row of rows) {
+    const year = trueUpYearFor(row.windowStart);
+    byYear.set(year, [...(byYear.get(year) ?? []), row]);
+  }
+
+  return [...byYear.entries()].map(([trueUpYear, allRows]) => {
+    // The in-progress period's newest day usually has partial solar data, so an
+    // in-progress year is totaled through its last period with complete data.
+    const excludesCurrentPeriod = allRows.some((r) => r.inProgress && r.savings === null);
+    const yearRows = excludesCurrentPeriod ? allRows.filter((r) => !r.inProgress) : allRows;
+    const startsWithYear = yearRows.length > 0 && Number(yearRows[0].windowStart.slice(5, 7)) === TRUE_UP_MONTH;
+    const complete = startsWithYear && yearRows.every((r) => r.savings !== null);
+    const periodTotal = yearRows.reduce((sum, r) => sum + r.actualCost, 0);
+    const minDeliveryTotal = yearRows.reduce((sum, r) => sum + r.minDeliveryCost, 0);
+    const inProgress = allRows.some((r) => r.inProgress);
+    // A net credit at True-Up is forfeited, and the delivery minimum bill sets a floor.
+    // Neither applies until the year settles, so an in-progress year shows its running sum.
+    const trueUpCost = inProgress ? periodTotal : Math.max(periodTotal, minDeliveryTotal, 0);
+    const noSolarCost = complete ? yearRows.reduce((sum, r) => sum + (r.noSolarCost ?? 0), 0) : null;
+    return {
+      trueUpYear,
+      inProgress,
+      rows: allRows,
+      excludesCurrentPeriod,
+      complete,
+      solarKwh: complete ? yearRows.reduce((sum, r) => sum + (r.solarKwh ?? 0), 0) : null,
+      exportKwh: yearRows.reduce((sum, r) => sum + r.exportKwh, 0),
+      periodTotal,
+      minDeliveryTotal,
+      trueUpCost,
+      noSolarCost,
+      savings: noSolarCost === null ? null : noSolarCost - trueUpCost,
+    };
+  });
 }

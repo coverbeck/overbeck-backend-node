@@ -33,8 +33,9 @@
 
 <h2>Solar Savings</h2>
 {% macro dollars(v) %}{{ '-' if v < 0 }}${{ (v if v >= 0 else -v).toFixed(2) }}{% endmacro %}
-{% if savingsRows.length %}
+{% if nemYears.length %}
 <p>Estimated electric bill with and without the solar panels, on the same rate plan (E-TOU-C). Covers energy charges, baseline credit, PCIA, and tax; leaves out the fixed Base Services Charge and the generation credit, which roughly cancels 3CE's generation charge.</p>
+<p>Billing periods are grouped by NEM True-Up year. Credits and charges offset each other within a year, and at the July True-Up a net credit is forfeited and the delivery minimum bill applies, so each year's total is settled that way rather than summed period by period.</p>
 <div class="table-scroll">
 <table class="data-table">
   <thead>
@@ -47,8 +48,12 @@
       <th>Saved</th>
     </tr>
   </thead>
+  {% for year in nemYears %}
   <tbody>
-    {% for row in savingsRows %}
+    <tr class="year-header">
+      <th colspan="6">True-Up July {{ year.trueUpYear }}{% if year.inProgress %} <span class="hint">(year in progress)</span>{% endif %}</th>
+    </tr>
+    {% for row in year.rows %}
     <tr>
       <td>{{ row.label }}{% if row.inProgress %} <span class="hint">(in progress)</span>{% endif %}</td>
       {% if row.savings === null %}
@@ -61,14 +66,34 @@
       <td>{{ row.exportKwh.toFixed(1) }}</td>
       <td>{{ dollars(row.actualCost) }}</td>
       <td>{{ dollars(row.noSolarCost) }}</td>
-      <td><strong>{{ dollars(row.savings) }}</strong></td>
+      <td>{{ dollars(row.savings) }}</td>
       {% endif %}
     </tr>
     {% endfor %}
+    <tr class="year-total">
+      <th>Year total{% if year.excludesCurrentPeriod %} <span class="hint">(so far, excluding the current period)</span>{% elif year.inProgress %} <span class="hint">(so far)</span>{% endif %}</th>
+      {% if year.complete %}
+      <th>{{ year.solarKwh.toFixed(1) }}</th>
+      <th>{{ year.exportKwh.toFixed(1) }}</th>
+      <th>
+        {{ dollars(year.trueUpCost) }}
+        {% if year.trueUpCost > year.periodTotal + 0.005 %}
+        <br><span class="hint">{% if year.minDeliveryTotal > year.periodTotal and year.minDeliveryTotal > 0 %}delivery minimum (periods sum to {{ dollars(year.periodTotal) }}){% else %}{{ dollars(-year.periodTotal) }} credit forfeited{% endif %}</span>
+        {% endif %}
+      </th>
+      <th>{{ dollars(year.noSolarCost) }}</th>
+      <th>{{ dollars(year.savings) }}</th>
+      {% else %}
+      <th>—</th>
+      <th>{{ year.exportKwh.toFixed(1) }}</th>
+      <td colspan="3" class="hint">Not computable: solar data incomplete for this True-Up year</td>
+      {% endif %}
+    </tr>
   </tbody>
+  {% endfor %}
   <tfoot>
     <tr>
-      <th colspan="5">Total ({{ savingsTotalPeriods }} period{{ 's' if savingsTotalPeriods != 1 }} with complete solar data)</th>
+      <th colspan="5">Total ({{ savingsTotalYears }} True-Up year{{ 's' if savingsTotalYears != 1 }} settled with complete data)</th>
       <th>{{ dollars(savingsTotal) }}</th>
     </tr>
   </tfoot>

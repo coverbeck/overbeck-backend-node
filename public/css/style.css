@@ -115,3 +115,15 @@ main {
   border-top: 2px solid #999;
   border-bottom: none;
 }
+
+.data-table .year-header th {
+  text-align: left;
+  padding-top: 1.25rem;
+  border-bottom: 2px solid #999;
+}
+
+.data-table .year-total th,
+.data-table .year-total td {
+  border-bottom: none;
+  vertical-align: top;
+}
