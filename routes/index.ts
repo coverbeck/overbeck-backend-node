@@ -765,6 +765,194 @@ router.get('/api/solar-generation/dates', requireAuth, (req: Request, res: Respo
   });
 });
 
+interface SolarDailyInput {
+  generationDate: string;
+  generationKwh: number;
+}
+
+function isSolarDaily(reading: unknown): reading is SolarDailyInput {
+  if (typeof reading !== 'object' || reading === null) return false;
+  const r = reading as Record<string, unknown>;
+  return (
+    typeof r.generationDate === 'string' && USAGE_DATE_PATTERN.test(r.generationDate) &&
+    isFiniteNumber(r.generationKwh)
+  );
+}
+
+const selectSolarDaily = db.prepare('SELECT generation_kwh FROM solar_daily WHERE generation_date = ?');
+const insertSolarDaily = db.prepare('INSERT INTO solar_daily (generation_date, generation_kwh) VALUES (?, ?)');
+const updateSolarDaily = db.prepare(
+  "UPDATE solar_daily SET generation_kwh = ?, updated_timestamp = datetime('now') WHERE generation_date = ?"
+);
+
+// Upserts rather than INSERT OR IGNORE: a day fetched before it ended holds a partial
+// total, and a later fetch should replace it.
+const upsertSolarDailies = db.transaction((readings: SolarDailyInput[]) => {
+  let inserted = 0;
+  let updated = 0;
+  for (const r of readings) {
+    const existing = selectSolarDaily.get(r.generationDate) as { generation_kwh: number } | undefined;
+    if (!existing) {
+      insertSolarDaily.run(r.generationDate, r.generationKwh);
+      inserted++;
+    } else if (existing.generation_kwh !== r.generationKwh) {
+      updateSolarDaily.run(r.generationKwh, r.generationDate);
+      updated++;
+    }
+  }
+  return { inserted, updated };
+});
+
+router.post('/api/solar-daily', requireAuth, (req: Request, res: Response) => {
+  const { readings } = (req.body ?? {}) as { readings?: unknown };
+
+  if (!Array.isArray(readings)) {
+    res.status(400).json({ error: 'readings must be an array' });
+    return;
+  }
+
+  for (const reading of readings) {
+    if (!isSolarDaily(reading)) {
+      res.status(400).json({ error: 'invalid solar daily reading', reading });
+      return;
+    }
+  }
+
+  const { inserted, updated } = readings.length
+    ? upsertSolarDailies(readings as SolarDailyInput[])
+    : { inserted: 0, updated: 0 };
+
+  res.status(201).json({
+    received: readings.length,
+    inserted,
+    updated,
+    unchanged: readings.length - inserted - updated,
+  });
+});
+
+const ELECTRIC_BILL_AMOUNT_FIELDS = [
+  'netKwh',
+  'importKwh',
+  'exportKwh',
+  'usageCharges',
+  'currentAmount',
+  'totalNemCharges',
+  'deferredNemCharges',
+  'energyPurchased',
+  'totalEnergyCosts',
+] as const;
+
+type ElectricBillAmountField = (typeof ELECTRIC_BILL_AMOUNT_FIELDS)[number];
+
+type ElectricBillInput = {
+  startDate: string;
+  endDate: string;
+  estimated: boolean;
+} & Record<ElectricBillAmountField, number | null>;
+
+function isElectricBill(bill: unknown): bill is ElectricBillInput {
+  if (typeof bill !== 'object' || bill === null) return false;
+  const b = bill as Record<string, unknown>;
+  return (
+    typeof b.startDate === 'string' && USAGE_DATE_PATTERN.test(b.startDate) &&
+    typeof b.endDate === 'string' && USAGE_DATE_PATTERN.test(b.endDate) &&
+    b.startDate < b.endDate &&
+    typeof b.estimated === 'boolean' &&
+    ELECTRIC_BILL_AMOUNT_FIELDS.every((field) => b[field] === null || isFiniteNumber(b[field]))
+  );
+}
+
+interface ElectricBillRow {
+  net_kwh: number | null;
+  import_kwh: number | null;
+  export_kwh: number | null;
+  usage_charges: number | null;
+  current_amount: number | null;
+  total_nem_charges: number | null;
+  deferred_nem_charges: number | null;
+  energy_purchased: number | null;
+  total_energy_costs: number | null;
+  estimated: number;
+}
+
+function electricBillValues(b: ElectricBillInput): ElectricBillRow {
+  return {
+    net_kwh: b.netKwh,
+    import_kwh: b.importKwh,
+    export_kwh: b.exportKwh,
+    usage_charges: b.usageCharges,
+    current_amount: b.currentAmount,
+    total_nem_charges: b.totalNemCharges,
+    deferred_nem_charges: b.deferredNemCharges,
+    energy_purchased: b.energyPurchased,
+    total_energy_costs: b.totalEnergyCosts,
+    estimated: b.estimated ? 1 : 0,
+  };
+}
+
+const ELECTRIC_BILL_COLUMNS = [
+  'net_kwh', 'import_kwh', 'export_kwh', 'usage_charges', 'current_amount',
+  'total_nem_charges', 'deferred_nem_charges', 'energy_purchased', 'total_energy_costs', 'estimated',
+] as const satisfies readonly (keyof ElectricBillRow)[];
+
+const selectElectricBill = db.prepare(
+  `SELECT ${ELECTRIC_BILL_COLUMNS.join(', ')} FROM electric_bills WHERE start_date = ? AND end_date = ?`
+);
+const insertElectricBill = db.prepare(`
+  INSERT INTO electric_bills (start_date, end_date, ${ELECTRIC_BILL_COLUMNS.join(', ')})
+  VALUES (@start_date, @end_date, ${ELECTRIC_BILL_COLUMNS.map((c) => `@${c}`).join(', ')})
+`);
+const updateElectricBill = db.prepare(`
+  UPDATE electric_bills
+  SET ${ELECTRIC_BILL_COLUMNS.map((c) => `${c} = @${c}`).join(', ')}, updated_timestamp = datetime('now')
+  WHERE start_date = @start_date AND end_date = @end_date
+`);
+
+// Upserts so a rerun picks up any later PG&E correction to a bill's amounts.
+const upsertElectricBills = db.transaction((bills: ElectricBillInput[]) => {
+  let inserted = 0;
+  let updated = 0;
+  for (const b of bills) {
+    const values = { start_date: b.startDate, end_date: b.endDate, ...electricBillValues(b) };
+    const existing = selectElectricBill.get(b.startDate, b.endDate) as ElectricBillRow | undefined;
+    if (!existing) {
+      insertElectricBill.run(values);
+      inserted++;
+    } else if (ELECTRIC_BILL_COLUMNS.some((c) => existing[c] !== values[c])) {
+      updateElectricBill.run(values);
+      updated++;
+    }
+  }
+  return { inserted, updated };
+});
+
+router.post('/api/electric-bills', requireAuth, (req: Request, res: Response) => {
+  const { bills } = (req.body ?? {}) as { bills?: unknown };
+
+  if (!Array.isArray(bills)) {
+    res.status(400).json({ error: 'bills must be an array' });
+    return;
+  }
+
+  for (const bill of bills) {
+    if (!isElectricBill(bill)) {
+      res.status(400).json({ error: 'invalid electric bill', bill });
+      return;
+    }
+  }
+
+  const { inserted, updated } = bills.length
+    ? upsertElectricBills(bills as ElectricBillInput[])
+    : { inserted: 0, updated: 0 };
+
+  res.status(201).json({
+    received: bills.length,
+    inserted,
+    updated,
+    unchanged: bills.length - inserted - updated,
+  });
+});
+
 router.get('/api/electric-usage/hourly', requireSession, (req: Request, res: Response) => {
   const date = req.query.date;
   if (typeof date !== 'string' || !USAGE_DATE_PATTERN.test(date)) {

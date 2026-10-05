@@ -74,6 +74,45 @@ db.exec(`
   )
 `);
 
+// Whole-day production totals from Enphase's energy_lifetime endpoint, back to the
+// system's 2014 install. Kept apart from solar_generation's 5-minute intervals so a
+// daily row is never counted as one interval (or double-counted alongside them).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS solar_daily (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generation_date TEXT NOT NULL UNIQUE,
+    generation_kwh REAL NOT NULL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+// One row per PG&E electric bill segment, from the Opower bill history (back to 2007).
+// end_date is exclusive: PG&E's interval ends at midnight, so the bill's last day is
+// the day before. What the dollar fields mean changes over time (single NEM amount
+// before late 2022, split NEM/minimum fields after, Base Services Charge from 2026-03);
+// they're stored as PG&E reports them, nullable where a field didn't exist yet.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS electric_bills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    net_kwh REAL,
+    import_kwh REAL,
+    export_kwh REAL,
+    usage_charges REAL,
+    current_amount REAL,
+    total_nem_charges REAL,
+    deferred_nem_charges REAL,
+    energy_purchased REAL,
+    total_energy_costs REAL,
+    estimated INTEGER NOT NULL DEFAULT 0,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(start_date, end_date)
+  )
+`);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS job_checkins (
     job_name TEXT PRIMARY KEY,
