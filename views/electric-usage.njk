@@ -34,112 +34,85 @@
 <h2>Solar Savings</h2>
 {% macro dollars(v) %}{{ '-' if v < 0 }}${{ (v if v >= 0 else -v).toFixed(2) }}{% endmacro %}
 {% if payback.years.length %}
-<h3>Payback</h3>
 <p>
   {% if payback.paidOffYear %}The panels ({{ dollars(payback.cost) }} after incentives) paid for themselves in the True-Up year ending July {{ payback.paidOffYear }}.
   {% else %}{{ dollars(payback.cost - payback.totalSavings) }} to go before the panels ({{ dollars(payback.cost) }} after incentives) pay for themselves.{% endif %}
-  Estimated savings through July {{ payback.years[payback.years.length - 1].trueUpYear }}: {{ dollars(payback.totalSavings) }}.
+  Estimated savings to date: {{ dollars(payback.totalSavings) }}.
 </p>
-<p class="hint">Estimated from each bill's net kWh plus the panels' production, priced at PG&amp;E bundled rates (3CE's rates are ignored) on the plan the house would have been on without solar: tiered E-1, then E-TOU-C from about mid-2022, when PG&amp;E moved customers by default. With solar, a year costs the larger of its net charges and the delivery minimum bill. The fixed Base Services Charge (from March 2026) is left out of both.</p>
+<p class="hint">Estimated electric bill with and without the panels, per NEM True-Up year. Credits and charges offset each other within a year, and at the July True-Up a net credit is forfeited and the delivery minimum bill applies, so each year is settled that way rather than summed period by period. The fixed Base Services Charge (from March 2026) is left out of both sides.</p>
+<p class="hint">Each year uses the most detailed data available. <strong>Hourly</strong> years are modeled from hourly usage and solar data on E-TOU-C, including PCIA. <strong>Bill-level</strong> years are estimated from each bill's net kWh plus the panels' daily production, priced at PG&amp;E bundled rates on the plan the house would have been on without solar (tiered E-1, then E-TOU-C from about mid-2022, when PG&amp;E moved customers by default), with PCIA only where its rate is known (2025). 3CE's generation rates are ignored throughout.</p>
 <div class="table-scroll">
-<table class="data-table">
+<table class="data-table savings-table">
   <thead>
     <tr>
       <th>True-Up year</th>
       <th>Solar (kWh)</th>
+      <th>Exported (kWh)</th>
       <th>Bill with solar</th>
       <th>Bill without solar</th>
       <th>Saved</th>
       <th>Saved to date</th>
     </tr>
   </thead>
+  {% for year in payback.years %}
   <tbody>
-    {% for year in payback.years | reverse %}
-    <tr>
-      <td>
-        July {{ year.trueUpYear }}
-        <br><span class="hint">{{ year.startDate }} to {{ year.endDate }}{% if year.partial %}, from the install{% endif %}{% if year.estimatedBills.length %}; missing bill {{ year.estimatedBills | join(', ') }} estimated{% endif %}</span>
-      </td>
-      <td>{{ year.solarKwh.toFixed(0) }}</td>
-      <td>{{ dollars(year.withSolarCost) }}</td>
-      <td>{{ dollars(year.noSolarCost) }}<br><span class="hint">{{ year.noSolarPlan }}</span></td>
-      <td>{{ dollars(year.savings) }}</td>
-      <td>{{ dollars(year.cumulativeSavings) }}{% if year.trueUpYear == payback.paidOffYear %}<br><span class="hint">paid off</span>{% endif %}</td>
+    <tr class="year-row">
+      <th>
+        July {{ year.trueUpYear }}{% if year.inProgress %} <span class="hint">(in progress{% if year.hourly.excludesCurrentPeriod %}; totals exclude the current period{% endif %})</span>{% endif %}
+        <br><span class="hint">
+          {%- if year.bills %}{{ year.bills.rangeLabel }}{% if year.bills.partial %}, from the install{% endif %} · {% endif -%}
+          {%- if year.method == 'hourly' %}hourly{% elif year.method == 'bills' %}bill-level, {{ year.bills.noSolarPlan }}{% endif -%}
+        </span>
+        {% if year.bills and year.bills.estimatedBills.length %}<br><span class="hint">Missing bill estimated: {{ year.bills.estimatedBills | join(', ') }}</span>{% endif %}
+        {% if year.periods.length %}
+        <br><button type="button" class="link-button period-toggle" aria-expanded="{{ 'true' if year.inProgress else 'false' }}">{{ year.periods.length }} billing period{{ 's' if year.periods.length != 1 }}{% if year.method == 'bills' %} with hourly data{% endif %}</button>
+        {% endif %}
+      </th>
+      {% if year.savings === null %}
+      <th>—</th>
+      <th>{{ year.exportKwh.toFixed(1) if year.exportKwh !== null else '—' }}</th>
+      <td colspan="4" class="hint">Not computable: solar data incomplete for this True-Up year</td>
+      {% else %}
+      <th>{{ year.solarKwh.toFixed(0) }}</th>
+      <th>{{ year.exportKwh.toFixed(0) if year.exportKwh !== null else '—' }}</th>
+      <th>{{ dollars(year.withSolarCost) }}{% if year.minimumApplied %}<br><span class="hint">delivery minimum</span>{% endif %}</th>
+      <th>{{ dollars(year.noSolarCost) }}</th>
+      <th>{{ dollars(year.savings) }}</th>
+      <th>{% if year.cumulativeSavings !== null %}{{ dollars(year.cumulativeSavings) }}{% if year.trueUpYear == payback.paidOffYear %}<br><span class="hint">paid off</span>{% endif %}{% else %}—{% endif %}</th>
+      {% endif %}
     </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-<h3>By billing period, from 2025</h3>
-{% endif %}
-{% if nemYears.length %}
-<p>Estimated electric bill with and without the solar panels, on the same rate plan (E-TOU-C). Covers energy charges, baseline credit, PCIA, and tax; leaves out the fixed Base Services Charge and the generation credit, which roughly cancels 3CE's generation charge.</p>
-<p>Billing periods are grouped by NEM True-Up year. Credits and charges offset each other within a year, and at the July True-Up a net credit is forfeited and the delivery minimum bill applies, so each year's total is settled that way rather than summed period by period.</p>
-<div class="table-scroll">
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>Billing period</th>
-      <th>Solar (kWh)</th>
-      <th>Exported (kWh)</th>
-      <th>Bill with solar</th>
-      <th>Bill without solar</th>
-      <th>Saved</th>
-    </tr>
-  </thead>
-  {% for year in nemYears %}
-  <tbody>
-    <tr class="year-header">
-      <th colspan="6">True-Up July {{ year.trueUpYear }}{% if year.inProgress %} <span class="hint">(year in progress)</span>{% endif %}</th>
-    </tr>
-    {% for row in year.rows %}
-    <tr>
+    {% for row in year.periods %}
+    <tr class="period-row"{% if not year.inProgress %} hidden{% endif %}>
       <td>{{ row.label }}{% if row.inProgress %} <span class="hint">(in progress)</span>{% endif %}</td>
       {% if row.savings === null %}
       <td>—</td>
       <td>{{ row.exportKwh.toFixed(1) }}</td>
       <td>{{ dollars(row.actualCost) }}</td>
-      <td colspan="2" class="hint">Solar data incomplete ({{ row.solarDays }} of {{ row.days }} days)</td>
+      <td colspan="3" class="hint">Solar data incomplete ({{ row.solarDays }} of {{ row.days }} days)</td>
       {% else %}
       <td>{{ row.solarKwh.toFixed(1) }}</td>
       <td>{{ row.exportKwh.toFixed(1) }}</td>
       <td>{{ dollars(row.actualCost) }}</td>
       <td>{{ dollars(row.noSolarCost) }}</td>
       <td>{{ dollars(row.savings) }}</td>
+      <td></td>
       {% endif %}
     </tr>
     {% endfor %}
-    <tr class="year-total">
-      <th>Year total{% if year.excludesCurrentPeriod %} <span class="hint">(so far, excluding the current period)</span>{% elif year.inProgress %} <span class="hint">(so far)</span>{% endif %}</th>
-      {% if year.complete %}
-      <th>{{ year.solarKwh.toFixed(1) }}</th>
-      <th>{{ year.exportKwh.toFixed(1) }}</th>
-      <th>
-        {{ dollars(year.trueUpCost) }}
-        {% if year.trueUpCost > year.periodTotal + 0.005 %}
-        <br><span class="hint">{% if year.minDeliveryTotal > year.periodTotal and year.minDeliveryTotal > 0 %}delivery minimum (periods sum to {{ dollars(year.periodTotal) }}){% else %}{{ dollars(-year.periodTotal) }} credit forfeited{% endif %}</span>
-        {% endif %}
-      </th>
-      <th>{{ dollars(year.noSolarCost) }}</th>
-      <th>{{ dollars(year.savings) }}</th>
-      {% else %}
-      <th>—</th>
-      <th>{{ year.exportKwh.toFixed(1) }}</th>
-      <td colspan="3" class="hint">Not computable: solar data incomplete for this True-Up year</td>
-      {% endif %}
-    </tr>
   </tbody>
   {% endfor %}
   <tfoot>
     <tr>
-      <th colspan="5">Total ({{ savingsTotalYears }} True-Up year{{ 's' if savingsTotalYears != 1 }} settled with complete data)</th>
-      <th>{{ dollars(savingsTotal) }}</th>
+      <th>Total, settled years</th>
+      <th colspan="4"></th>
+      <th>{{ dollars(payback.totalSavings) }}</th>
+      <th></th>
     </tr>
   </tfoot>
 </table>
 </div>
 {% else %}
-<p>No billing periods since January 1, 2025 with usage data yet.</p>
+<p>No billing data yet.</p>
 {% endif %}
 
 <h2>Natural Gas</h2>
@@ -155,6 +128,14 @@
 
 {% block scripts %}
 <script>
+  for (const button of document.querySelectorAll('.period-toggle')) {
+    button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') !== 'true';
+      button.setAttribute('aria-expanded', String(expanded));
+      for (const row of button.closest('tbody').querySelectorAll('.period-row')) row.hidden = !expanded;
+    });
+  }
+
   const periodLabels = {{ periodLabels | dump | safe }};
   const periodFullLabels = {{ periodFullLabels | dump | safe }};
   const periodWindowStarts = {{ periodWindowStarts | dump | safe }};

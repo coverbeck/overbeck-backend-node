@@ -116,14 +116,36 @@ main {
   border-bottom: none;
 }
 
-.data-table .year-header th {
-  text-align: left;
-  padding-top: 1.25rem;
-  border-bottom: 2px solid #999;
+.data-table .year-row th {
+  vertical-align: top;
+  border-top: 2px solid #999;
 }
 
-.data-table .year-total th,
-.data-table .year-total td {
-  border-bottom: none;
-  vertical-align: top;
+.data-table .period-row td {
+  color: #444;
+  font-size: 0.9rem;
+}
+
+.data-table .period-row td:first-child {
+  padding-left: 1.75rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #0645ad;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: normal;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.link-button::before {
+  content: '▸ ';
+}
+
+.link-button[aria-expanded="true"]::before {
+  content: '▾ ';
 }

@@ -1,7 +1,8 @@
 // Estimates whether the solar panels have paid for themselves, one NEM True-Up year
-// at a time back to the August 2014 install, from PG&E's bill history (net kWh per
-// bill) and Enphase's daily production totals. solarSavings.ts models 2025 on from
-// hourly data; this works at bill level so it can reach years with no interval data.
+// at a time back to the August 2014 install. Each year uses the most detailed data
+// there is for it: solarSavings.ts's hourly model once a whole year has hourly usage
+// and solar data, and otherwise an estimate from PG&E's bill history (net kWh per
+// bill) and Enphase's daily production totals, described below.
 //
 // Without solar, each bill's usage is its net kWh plus what the panels produced in
 // those days. That's priced at PG&E's total bundled rates (data/pge-rate-history.json
@@ -9,7 +10,8 @@
 // been on: tiered E-1 until PG&E's default move to E-TOU-C, then E-TOU-C, with the
 // peak (4-9pm) share of usage taken from the hourly data since 2025. Usage is spread
 // evenly over a bill's days, and each day gets its own rates and baseline allowance.
-// 3CE's generation rates are ignored; all years are treated as PG&E bundled service.
+// 3CE's generation rates are ignored; all years are treated as PG&E bundled service,
+// plus PCIA where we have its rate (RATE_PERIODS, from 2025), as in the hourly model.
 //
 // With solar, a True-Up year costs the larger of its NEM charges and the delivery
 // minimum bill (a year-end credit is forfeited). The NEM charges come from the bills
@@ -22,7 +24,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { CITY_TAX_RATE, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS, isPeakHour, ratePeriodFor, seasonFor, trueUpYearFor } from './solarSavings.ts';
-import type { HourlyUsage, Season, SeasonRates } from './solarSavings.ts';
+import type { HourlyUsage, NemYear, SavingsRow, Season, SeasonRates } from './solarSavings.ts';
 
 // What the system cost after incentives.
 export const SOLAR_NET_COST = 5735;
@@ -89,15 +91,25 @@ function minimumPerDayFor(date: string): number {
   return date < RATES_EFFECTIVE_FROM ? periodFor(RATE_HISTORY.e1, date).minimumPerDay : ratePeriodFor(date).minDeliveryPerDay;
 }
 
-// E-TOU-C rates for one day, as positive $/kWh.
-function eTouCFor(date: string): { rates: SeasonRates; baselineCredit: number } {
+// E-TOU-C rates for one day, as positive $/kWh. PCIA is 0 before RATE_PERIODS.
+function eTouCFor(date: string): { rates: SeasonRates; baselineCredit: number; pcia: number } {
   const season = seasonFor(date);
   if (date >= RATES_EFFECTIVE_FROM) {
     const p = ratePeriodFor(date);
-    return { rates: p[season], baselineCredit: p.baselineCredit };
+    return { rates: p[season], baselineCredit: p.baselineCredit, pcia: p.pcia };
   }
   const p = periodFor(RATE_HISTORY.eTouC, date);
-  return { rates: p[season], baselineCredit: -p.baselineCredit };
+  return { rates: p[season], baselineCredit: -p.baselineCredit, pcia: 0 };
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// e.g. "Jun 28, 2023 - Jul 25, 2024" for [2023-06-28, 2024-07-26).
+function rangeLabel(start: string, endExclusive: string): string {
+  const last = new Date(`${endExclusive}T00:00:00Z`);
+  last.setUTCDate(last.getUTCDate() - 1);
+  const format = (date: string) => `${MONTHS[Number(date.slice(5, 7)) - 1]} ${Number(date.slice(8, 10))}, ${date.slice(0, 4)}`;
+  return `${format(start)} - ${format(last.toISOString().slice(0, 10))}`;
 }
 
 function daysBetween(start: string, end: string): string[] {
@@ -127,9 +139,9 @@ function noSolarBill(days: string[], kwh: number, peakShare: Record<Season, numb
         tierStart = tierEnd;
       }
     } else {
-      const { rates, baselineCredit } = eTouCFor(day);
+      const { rates, baselineCredit, pcia } = eTouCFor(day);
       const share = peakShare[seasonFor(day)];
-      total += perDay * (share * rates.peak + (1 - share) * rates.offPeak);
+      total += perDay * (share * rates.peak + (1 - share) * rates.offPeak + pcia);
       total -= baselineCredit * Math.min(perDay, allowancePerDay);
     }
   }
@@ -161,46 +173,36 @@ export interface Bill {
   nemCharges: number | null; // with tax; null when the bill doesn't report them
 }
 
-export interface PaybackYear {
+// A settled True-Up year estimated from the bill history.
+export interface BillYear {
   trueUpYear: number;
-  startDate: string;
-  endDate: string; // exclusive
+  rangeLabel: string;
   partial: boolean; // the first year, which starts at the install rather than a True-Up
-  estimatedBills: string[]; // labels of missing bills filled in from their neighbors
+  estimatedBills: string[]; // missing bills filled in from their neighbors
   noSolarPlan: string;
   solarKwh: number;
-  usageKwh: number; // estimated usage without solar
   nemCharges: number;
   minimumTotal: number;
   withSolarCost: number;
   noSolarCost: number;
-  savings: number;
-  cumulativeSavings: number;
-}
-
-export interface Payback {
-  years: PaybackYear[]; // oldest first; settled True-Up years only
-  cost: number;
-  totalSavings: number;
-  paidOffYear: number | null;
 }
 
 // bills: oldest first, from the bill history. modeledNemCharges: solarSavings.ts's
 // modeled bill with solar (with tax) keyed by bill start date, for bills without NEM
 // charges of their own.
-export function computePayback(
+export function estimateYearsFromBills(
   bills: Bill[],
   solarKwhByDate: Map<string, number>,
   peakShare: Record<Season, number>,
   modeledNemCharges: Map<string, number>,
-): Payback {
+): BillYear[] {
   // A True-Up year has settled once a bill from the next year exists.
   const lastSettledYear = bills.length ? trueUpYearFor(bills[bills.length - 1].startDate) - 1 : 0;
 
   // Fill gaps in the bill history from the neighboring bills' daily averages.
   const nemBills = bills.filter((b) => b.startDate >= NEM_START);
   const filled: (Bill & { estimated: boolean })[] = [];
-  for (const [i, bill] of nemBills.entries()) {
+  for (const bill of nemBills) {
     const prev = filled.at(-1);
     if (prev && prev.endDate < bill.startDate) {
       const gapDays = daysBetween(prev.endDate, bill.startDate).length;
@@ -215,7 +217,7 @@ export function computePayback(
         estimated: true,
       });
     }
-    filled.push({ ...nemBills[i], estimated: false });
+    filled.push({ ...bill, estimated: false });
   }
 
   const byYear = new Map<number, typeof filled>();
@@ -225,10 +227,8 @@ export function computePayback(
     byYear.set(year, [...(byYear.get(year) ?? []), bill]);
   }
 
-  let cumulativeSavings = 0;
-  const years = [...byYear.entries()].map(([trueUpYear, yearBills], index): PaybackYear => {
+  return [...byYear.entries()].map(([trueUpYear, yearBills], index): BillYear => {
     let solarKwh = 0;
-    let usageKwh = 0;
     let nemCharges = 0;
     let minimumTotal = 0;
     let noSolarCost = 0;
@@ -236,38 +236,98 @@ export function computePayback(
       const days = daysBetween(bill.startDate, bill.endDate);
       const solar = days.reduce((sum, d) => sum + (solarKwhByDate.get(d) ?? 0), 0);
       solarKwh += solar;
-      usageKwh += bill.netKwh + solar;
       nemCharges += bill.nemCharges ?? modeledNemCharges.get(bill.startDate) ?? 0;
       minimumTotal += days.reduce((sum, d) => sum + minimumPerDayFor(d), 0) * (1 + CITY_TAX_RATE);
       noSolarCost += noSolarBill(days, bill.netKwh + solar, peakShare) * (1 + CITY_TAX_RATE);
     }
     const startDate = yearBills[0].startDate;
     const endDate = yearBills[yearBills.length - 1].endDate;
-    const withSolarCost = Math.max(nemCharges, minimumTotal, 0);
-    const savings = noSolarCost - withSolarCost;
-    cumulativeSavings += savings;
     return {
       trueUpYear,
-      startDate,
-      endDate,
+      rangeLabel: rangeLabel(startDate, endDate),
       partial: index === 0,
-      estimatedBills: yearBills.filter((b) => b.estimated).map((b) => `${b.startDate} to ${b.endDate}`),
+      estimatedBills: yearBills.filter((b) => b.estimated).map((b) => rangeLabel(b.startDate, b.endDate)),
       noSolarPlan: endDate <= NO_SOLAR_TOU_FROM ? 'E-1' : startDate >= NO_SOLAR_TOU_FROM ? 'E-TOU-C' : 'E-1, then E-TOU-C',
       solarKwh,
-      usageKwh,
       nemCharges,
       minimumTotal,
-      withSolarCost,
+      withSolarCost: Math.max(nemCharges, minimumTotal, 0),
       noSolarCost,
-      savings,
-      cumulativeSavings,
     };
   });
+}
 
-  return {
-    years,
-    cost: SOLAR_NET_COST,
-    totalSavings: cumulativeSavings,
-    paidOffYear: years.find((y) => y.cumulativeSavings >= SOLAR_NET_COST)?.trueUpYear ?? null,
-  };
+export interface SavingsYear {
+  trueUpYear: number;
+  method: 'hourly' | 'bills' | null; // null: neither has enough data for this year
+  inProgress: boolean;
+  hourly: NemYear | null; // the hourly model's view of the year, whether or not it's used
+  bills: BillYear | null;
+  periods: SavingsRow[]; // newest first; the billing periods with hourly data
+  solarKwh: number | null;
+  exportKwh: number | null;
+  withSolarCost: number | null;
+  minimumApplied: boolean; // the delivery minimum, not net charges, set the bill with solar
+  noSolarCost: number | null;
+  savings: number | null;
+  cumulativeSavings: number | null; // through this year; null until it settles
+}
+
+export interface Payback {
+  years: SavingsYear[]; // newest first
+  cost: number;
+  totalSavings: number;
+  paidOffYear: number | null;
+}
+
+// nemYears: solarSavings.ts's hourly-model years, oldest first.
+export function computePayback(billYears: BillYear[], nemYears: NemYear[]): Payback {
+  const trueUpYears = [...new Set([...billYears.map((y) => y.trueUpYear), ...nemYears.map((y) => y.trueUpYear)])].sort((a, b) => a - b);
+  let totalSavings = 0;
+  let paidOffYear: number | null = null;
+  const years = trueUpYears.map((trueUpYear): SavingsYear => {
+    const hourly = nemYears.find((y) => y.trueUpYear === trueUpYear) ?? null;
+    const bills = billYears.find((y) => y.trueUpYear === trueUpYear) ?? null;
+    const inProgress = hourly?.inProgress ?? false;
+    const periods = hourly ? [...hourly.rows].reverse() : [];
+    const base = { trueUpYear, inProgress, hourly, bills, periods };
+
+    let year: SavingsYear;
+    if (hourly && (hourly.complete || inProgress || !bills)) {
+      year = {
+        ...base,
+        method: hourly.complete || inProgress ? 'hourly' : null,
+        solarKwh: hourly.solarKwh,
+        exportKwh: hourly.exportKwh,
+        withSolarCost: hourly.trueUpCost,
+        minimumApplied: !inProgress && hourly.trueUpCost > hourly.periodTotal + 0.005 && hourly.minDeliveryTotal > hourly.periodTotal,
+        noSolarCost: hourly.noSolarCost,
+        savings: hourly.savings,
+        cumulativeSavings: null,
+      };
+    } else if (bills) {
+      year = {
+        ...base,
+        method: 'bills',
+        solarKwh: bills.solarKwh,
+        exportKwh: null,
+        withSolarCost: bills.withSolarCost,
+        minimumApplied: bills.minimumTotal > bills.nemCharges,
+        noSolarCost: bills.noSolarCost,
+        savings: bills.noSolarCost - bills.withSolarCost,
+        cumulativeSavings: null,
+      };
+    } else {
+      throw new Error(`no data for True-Up year ${trueUpYear}`);
+    }
+
+    if (!inProgress && year.savings !== null) {
+      totalSavings += year.savings;
+      year.cumulativeSavings = totalSavings;
+      if (paidOffYear === null && totalSavings >= SOLAR_NET_COST) paidOffYear = trueUpYear;
+    }
+    return year;
+  });
+
+  return { years: years.reverse(), cost: SOLAR_NET_COST, totalSavings, paidOffYear };
 }

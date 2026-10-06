@@ -10,7 +10,7 @@ import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
-import { computePayback, peakShareFromHourly } from '../solarPayback.ts';
+import { computePayback, estimateYearsFromBills, peakShareFromHourly } from '../solarPayback.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -203,7 +203,10 @@ function buildPeriodWindows(periods: BillingPeriodRow[], lastDataDate: string | 
     };
   });
 
-  const lastEndDate = periods[periods.length - 1].end_date;
+  // The newest period has no successor to chain to, so its end comes back a day to
+  // where the next one will start.
+  const lastEndDate = previousDay(periods[periods.length - 1].end_date);
+  windows[windows.length - 1].windowEnd = lastEndDate;
   const today = todayPacific();
   if (lastEndDate < today) {
     // Label the in-progress period through the last date we actually have data
@@ -220,6 +223,12 @@ function buildPeriodWindows(periods: BillingPeriodRow[], lastDataDate: string | 
   }
 
   return windows;
+}
+
+function previousDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function inWindow(date: string, window: PeriodWindow): boolean {
@@ -366,9 +375,6 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     solarKwhByHour,
     solarIntervalCountByDate,
   );
-  // Newest first, for both the years and the periods within each year.
-  const nemYears = computeNemYears(savingsRows).reverse().map((y) => ({ ...y, rows: [...y.rows].reverse() }));
-  const settledNemYears = nemYears.filter((y) => !y.inProgress && y.savings !== null);
 
   const bills = db.prepare(`
     SELECT start_date, end_date, net_kwh, usage_charges, total_nem_charges
@@ -388,7 +394,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     solarKwhByHour,
     solarIntervalCountByDate,
   );
-  const payback = computePayback(
+  const billYears = estimateYearsFromBills(
     bills.map((b) => ({
       startDate: b.start_date,
       endDate: b.end_date,
@@ -399,12 +405,10 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     peakShareFromHourly(hourlyUsage, solarKwhByHour, solarIntervalCountByDate),
     new Map(modeledBills.map((r) => [r.windowStart, r.actualCost])),
   );
+  const payback = computePayback(billYears, computeNemYears(savingsRows));
 
   res.render('electric-usage.njk', {
-    nemYears,
     payback,
-    savingsTotal: settledNemYears.reduce((sum, y) => sum + (y.savings ?? 0), 0),
-    savingsTotalYears: settledNemYears.length,
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
     periodWindowStarts: periodRows.map((r) => r.windowStart),
