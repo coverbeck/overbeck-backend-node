@@ -33,6 +33,45 @@
 
 <h2>Solar Savings</h2>
 {% macro dollars(v) %}{{ '-' if v < 0 }}${{ (v if v >= 0 else -v).toFixed(2) }}{% endmacro %}
+{% if payback.years.length %}
+<h3>Payback</h3>
+<p>
+  {% if payback.paidOffYear %}The panels ({{ dollars(payback.cost) }} after incentives) paid for themselves in the True-Up year ending July {{ payback.paidOffYear }}.
+  {% else %}{{ dollars(payback.cost - payback.totalSavings) }} to go before the panels ({{ dollars(payback.cost) }} after incentives) pay for themselves.{% endif %}
+  Estimated savings through July {{ payback.years[payback.years.length - 1].trueUpYear }}: {{ dollars(payback.totalSavings) }}.
+</p>
+<p class="hint">Estimated from each bill's net kWh plus the panels' production, priced at PG&amp;E bundled rates (3CE's rates are ignored) on the plan the house would have been on without solar: tiered E-1, then E-TOU-C from about mid-2022, when PG&amp;E moved customers by default. With solar, a year costs the larger of its net charges and the delivery minimum bill. The fixed Base Services Charge (from March 2026) is left out of both.</p>
+<div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>True-Up year</th>
+      <th>Solar (kWh)</th>
+      <th>Bill with solar</th>
+      <th>Bill without solar</th>
+      <th>Saved</th>
+      <th>Saved to date</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for year in payback.years | reverse %}
+    <tr>
+      <td>
+        July {{ year.trueUpYear }}
+        <br><span class="hint">{{ year.startDate }} to {{ year.endDate }}{% if year.partial %}, from the install{% endif %}{% if year.estimatedBills.length %}; missing bill {{ year.estimatedBills | join(', ') }} estimated{% endif %}</span>
+      </td>
+      <td>{{ year.solarKwh.toFixed(0) }}</td>
+      <td>{{ dollars(year.withSolarCost) }}</td>
+      <td>{{ dollars(year.noSolarCost) }}<br><span class="hint">{{ year.noSolarPlan }}</span></td>
+      <td>{{ dollars(year.savings) }}</td>
+      <td>{{ dollars(year.cumulativeSavings) }}{% if year.trueUpYear == payback.paidOffYear %}<br><span class="hint">paid off</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<h3>By billing period, from 2025</h3>
+{% endif %}
 {% if nemYears.length %}
 <p>Estimated electric bill with and without the solar panels, on the same rate plan (E-TOU-C). Covers energy charges, baseline credit, PCIA, and tax; leaves out the fixed Base Services Charge and the generation credit, which roughly cancels 3CE's generation charge.</p>
 <p>Billing periods are grouped by NEM True-Up year. Credits and charges offset each other within a year, and at the July True-Up a net credit is forfeited and the delivery minimum bill applies, so each year's total is settled that way rather than summed period by period.</p>

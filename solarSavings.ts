@@ -16,12 +16,12 @@
 // period bills and the minimum delivery charge (a year-end credit is forfeited, not
 // paid out). The no-solar side never drops that low, so it's just the sum.
 
-interface SeasonRates {
+export interface SeasonRates {
   peak: number; // $/kWh, 4-9pm every day
   offPeak: number; // $/kWh
 }
 
-interface RatePeriod {
+export interface RatePeriod {
   from: string; // first day these rates apply, YYYY-MM-DD
   summer: SeasonRates;
   winter: SeasonRates;
@@ -81,16 +81,16 @@ export const RATES_EFFECTIVE_FROM = RATE_PERIODS[0].from;
 
 // Territory T, Code B (not all-electric); unchanged since 2022-06-01.
 const BASELINE_KWH_PER_DAY = { summer: 6.5, winter: 7.5 };
-const CITY_TAX_RATE = 0.085;
+export const CITY_TAX_RATE = 0.085;
 
 // Same completeness threshold fetch-enphase.js uses: a date counts as fully fetched
 // once it has at least this many of its 288 five-minute intervals.
-const SOLAR_COMPLETE_INTERVALS = 250;
+export const SOLAR_COMPLETE_INTERVALS = 250;
 
-type Season = 'summer' | 'winter';
+export type Season = 'summer' | 'winter';
 
 // Summer = June 1 - Sept 30, winter = Oct 1 - May 31.
-function seasonFor(date: string): Season {
+export function seasonFor(date: string): Season {
   const month = Number(date.slice(5, 7));
   return month >= 6 && month <= 9 ? 'summer' : 'winter';
 }
@@ -103,8 +103,12 @@ function ratePeriodIndexFor(date: string): number {
   return index;
 }
 
+export function ratePeriodFor(date: string): RatePeriod {
+  return RATE_PERIODS[ratePeriodIndexFor(date)];
+}
+
 // Peak is 4-9pm, i.e. the hour buckets starting 16:00 through 20:00.
-function isPeakHour(startTime: string): boolean {
+export function isPeakHour(startTime: string): boolean {
   const hour = Number(startTime.slice(0, 2));
   return hour >= 16 && hour <= 20;
 }
@@ -233,13 +237,20 @@ export function computeSolarSavings(
   return rows;
 }
 
-// This account's True-Up statement comes in July: the last billing period of a NEM
-// year starts in late June, and the next year's first period starts in late July.
-const TRUE_UP_MONTH = 7;
+// This account's NEM year closes at a meter read in late June or July, but which one
+// varies: the True-Up statements we have start cycles on these dates (keyed by the
+// True-Up year the cycle ends in). Other years are assumed to start with the first
+// billing period beginning on or after June 15.
+const TRUE_UP_CYCLE_STARTS: Record<number, string> = {
+  2025: '2024-07-26',
+  2026: '2025-06-26',
+  2027: '2026-07-27',
+};
 
-function trueUpYearFor(windowStart: string): number {
+export function trueUpYearFor(windowStart: string): number {
   const year = Number(windowStart.slice(0, 4));
-  return Number(windowStart.slice(5, 7)) >= TRUE_UP_MONTH ? year + 1 : year;
+  const nextCycleStart = TRUE_UP_CYCLE_STARTS[year + 1] ?? `${year}-06-15`;
+  return windowStart >= nextCycleStart ? year + 1 : year;
 }
 
 export interface NemYear {
@@ -268,12 +279,14 @@ export function computeNemYears(rows: SavingsRow[]): NemYear[] {
   }
 
   return [...byYear.entries()].map(([trueUpYear, allRows]) => {
+    // Rows are contiguous, so a year starts at its True-Up boundary unless it's the
+    // first year we have rows for.
+    const startsWithYear = byYear.has(trueUpYear - 1);
     // The in-progress period's newest day usually has partial solar data, so an
     // in-progress year is totaled through its last period with complete data.
     const excludesCurrentPeriod = allRows.some((r) => r.inProgress && r.savings === null);
     const yearRows = excludesCurrentPeriod ? allRows.filter((r) => !r.inProgress) : allRows;
-    const startsWithYear = yearRows.length > 0 && Number(yearRows[0].windowStart.slice(5, 7)) === TRUE_UP_MONTH;
-    const complete = startsWithYear && yearRows.every((r) => r.savings !== null);
+    const complete = startsWithYear && yearRows.length > 0 && yearRows.every((r) => r.savings !== null);
     const periodTotal = yearRows.reduce((sum, r) => sum + r.actualCost, 0);
     const minDeliveryTotal = yearRows.reduce((sum, r) => sum + r.minDeliveryCost, 0);
     const inProgress = allRows.some((r) => r.inProgress);

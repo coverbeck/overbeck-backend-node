@@ -10,6 +10,7 @@ import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
+import { computePayback, peakShareFromHourly } from '../solarPayback.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -357,18 +358,51 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     GROUP BY generation_date
   `).all(RATES_EFFECTIVE_FROM) as { generation_date: string; count: number }[];
 
+  const solarKwhByHour = new Map(solarHourlyRows.map((r) => [`${r.generation_date} ${r.hour_start}`, r.generation_kwh]));
+  const solarIntervalCountByDate = new Map(solarCountRows.map((r) => [r.generation_date, r.count]));
   const savingsRows = computeSolarSavings(
     windows.map((w) => ({ label: w.rangeLabel, windowStart: w.windowStart, windowEnd: w.windowEnd })),
     hourlyUsage,
-    new Map(solarHourlyRows.map((r) => [`${r.generation_date} ${r.hour_start}`, r.generation_kwh])),
-    new Map(solarCountRows.map((r) => [r.generation_date, r.count])),
+    solarKwhByHour,
+    solarIntervalCountByDate,
   );
   // Newest first, for both the years and the periods within each year.
   const nemYears = computeNemYears(savingsRows).reverse().map((y) => ({ ...y, rows: [...y.rows].reverse() }));
   const settledNemYears = nemYears.filter((y) => !y.inProgress && y.savings !== null);
 
+  const bills = db.prepare(`
+    SELECT start_date, end_date, net_kwh, usage_charges, total_nem_charges
+    FROM electric_bills
+    WHERE net_kwh IS NOT NULL
+    ORDER BY start_date
+  `).all() as { start_date: string; end_date: string; net_kwh: number; usage_charges: number | null; total_nem_charges: number | null }[];
+  const solarDailyHistory = db.prepare(
+    'SELECT generation_date, generation_kwh FROM solar_daily'
+  ).all() as { generation_date: string; generation_kwh: number }[];
+  // From 2025 the hourly model's bundled-rate bill with solar stands in for the bills'
+  // NEM charges, which by then cover PG&E delivery only (and are gone after March 2026).
+  const modeledBills = computeSolarSavings(
+    bills.filter((b) => b.start_date >= RATES_EFFECTIVE_FROM)
+      .map((b) => ({ label: b.start_date, windowStart: b.start_date, windowEnd: b.end_date })),
+    hourlyUsage,
+    solarKwhByHour,
+    solarIntervalCountByDate,
+  );
+  const payback = computePayback(
+    bills.map((b) => ({
+      startDate: b.start_date,
+      endDate: b.end_date,
+      netKwh: b.net_kwh,
+      nemCharges: b.start_date >= RATES_EFFECTIVE_FROM ? null : b.total_nem_charges ?? b.usage_charges,
+    })),
+    new Map(solarDailyHistory.map((r) => [r.generation_date, r.generation_kwh])),
+    peakShareFromHourly(hourlyUsage, solarKwhByHour, solarIntervalCountByDate),
+    new Map(modeledBills.map((r) => [r.windowStart, r.actualCost])),
+  );
+
   res.render('electric-usage.njk', {
     nemYears,
+    payback,
     savingsTotal: settledNemYears.reduce((sum, y) => sum + (y.savings ?? 0), 0),
     savingsTotalYears: settledNemYears.length,
     periodLabels: periodRows.map((r) => r.shortLabel),
