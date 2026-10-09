@@ -141,7 +141,7 @@ db.exec(`
 
 // The next 18 hours of each snapshot, converted to °F / mph to match
 // station_readings. low_cloud_pct is null for NWS (not forecast) and NBM
-// (Open-Meteo returns none).
+// (Open-Meteo returns none); solar_wm2 is null for NWS (not forecast).
 db.exec(`
   CREATE TABLE IF NOT EXISTS forecast_hours (
     snapshot_id INTEGER NOT NULL REFERENCES forecast_snapshots(id),
@@ -154,6 +154,7 @@ db.exec(`
     wind_mph REAL,
     wind_dir_deg REAL,
     precip_prob_pct REAL,
+    solar_wm2 REAL,
     PRIMARY KEY (snapshot_id, valid_at)
   )
 `);

@@ -1,3 +1,5 @@
+import { fetchWithRetry, toSqliteUtc } from './forecast.ts';
+
 interface AmbientDeviceData {
   tempf: number;
   tempinf: number;
@@ -53,6 +55,96 @@ export async function getCurrentWeather(): Promise<WeatherReading> {
     dailyRain: lastData.dailyrainin,
     date: lastData.date,
   };
+}
+
+// Station history for Backyard Weather, from Ambient's developer API. The API
+// allows 1 request per second per API key, so calls here are spaced at least
+// that far apart.
+
+interface AmbientHistoryRow {
+  dateutc: number; // epoch ms
+  tempf?: number;
+  dewPoint?: number;
+  humidity?: number;
+  windspeedmph?: number;
+  windgustmph?: number;
+  winddir?: number;
+  solarradiation?: number;
+  uv?: number;
+  baromrelin?: number;
+  hourlyrainin?: number;
+}
+
+// One 5-minute reading, in the units stored in station_readings.
+export interface StationReading {
+  observedAt: string; // UTC, SQLite format
+  tempF: number | null;
+  dewpointF: number | null;
+  humidityPct: number | null;
+  windMph: number | null;
+  gustMph: number | null;
+  windDirDeg: number | null;
+  solarWm2: number | null;
+  uv: number | null;
+  pressureIn: number | null;
+  rainHourlyIn: number | null;
+}
+
+const AMBIENT_MIN_INTERVAL_MS = 1100;
+let lastAmbientCallMs = 0;
+
+async function fetchAmbient(path: string, params: Record<string, string> = {}): Promise<unknown> {
+  const applicationKey = process.env.AMBIENT_APP_KEY;
+  const apiKey = process.env.AMBIENT_API_KEY;
+  if (!applicationKey || !apiKey) {
+    throw new Error('AMBIENT_APP_KEY and AMBIENT_API_KEY must be set');
+  }
+
+  const wait = lastAmbientCallMs + AMBIENT_MIN_INTERVAL_MS - Date.now();
+  if (wait > 0) {
+    await new Promise((resolve) => setTimeout(resolve, wait));
+  }
+  lastAmbientCallMs = Date.now();
+
+  const query = new URLSearchParams({ applicationKey, apiKey, ...params });
+  const response = await fetchWithRetry(`https://api.ambientweather.net/v1/${path}?${query}`);
+  if (!response.ok) {
+    throw new Error(`Ambient Weather API returned ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getStationMac(): Promise<string> {
+  const devices = await fetchAmbient('devices') as Array<{ macAddress: string }>;
+  if (!devices.length) {
+    throw new Error('Ambient Weather API returned no devices');
+  }
+  return devices[0].macAddress; // only one device
+}
+
+// Up to `limit` readings (max 288, one day) at or before endDate (inclusive),
+// sorted oldest first. Ambient returns newest first.
+export async function getStationHistory(mac: string, endDate: Date, limit = 288): Promise<StationReading[]> {
+  const rows = await fetchAmbient(`devices/${encodeURIComponent(mac)}`, {
+    endDate: endDate.toISOString(),
+    limit: String(limit),
+  }) as AmbientHistoryRow[];
+
+  return rows
+    .map((row) => ({
+      observedAt: toSqliteUtc(new Date(row.dateutc)),
+      tempF: row.tempf ?? null,
+      dewpointF: row.dewPoint ?? null,
+      humidityPct: row.humidity ?? null,
+      windMph: row.windspeedmph ?? null,
+      gustMph: row.windgustmph ?? null,
+      windDirDeg: row.winddir ?? null,
+      solarWm2: row.solarradiation ?? null,
+      uv: row.uv ?? null,
+      pressureIn: row.baromrelin ?? null,
+      rainHourlyIn: row.hourlyrainin ?? null,
+    }))
+    .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
 }
 
 interface PublicDeviceResponse {
