@@ -122,4 +122,76 @@ db.exec(`
   )
 `);
 
+// Backyard Weather. All times are UTC in SQLite's 'YYYY-MM-DD HH:MM:SS' format,
+// matching datetime('now'), so they compare correctly as text.
+
+// One row per forecast fetch, per source/model. Every hourly fetch is kept even
+// when the source hasn't updated, since "what did the forecast say at 9pm" is
+// what gets evaluated.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS forecast_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL CHECK (source IN ('nws', 'om_hrrr', 'om_nbm', 'om_ecmwf')),
+    fetched_at TEXT NOT NULL,
+    issued_at TEXT,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(source, fetched_at)
+  )
+`);
+
+// The next 18 hours of each snapshot, converted to °F / mph to match
+// station_readings. low_cloud_pct is null for NWS (not forecast) and NBM
+// (Open-Meteo returns none).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS forecast_hours (
+    snapshot_id INTEGER NOT NULL REFERENCES forecast_snapshots(id),
+    valid_at TEXT NOT NULL,
+    temp_f REAL,
+    dewpoint_f REAL,
+    humidity_pct REAL,
+    sky_cover_pct REAL,
+    low_cloud_pct REAL,
+    wind_mph REAL,
+    wind_dir_deg REAL,
+    precip_prob_pct REAL,
+    PRIMARY KEY (snapshot_id, valid_at)
+  )
+`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_forecast_hours_valid_at ON forecast_hours(valid_at)');
+
+// Ambient station history at full 5-minute resolution. Columns are nullable
+// since individual sensors can drop out.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS station_readings (
+    observed_at TEXT PRIMARY KEY,
+    temp_f REAL,
+    dewpoint_f REAL,
+    humidity_pct REAL,
+    wind_mph REAL,
+    gust_mph REAL,
+    wind_dir_deg REAL,
+    solar_wm2 REAL,
+    uv REAL,
+    pressure_in REAL,
+    rain_hourly_in REAL,
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+// Each GET /api/weather/tonight answer with its inputs, to evaluate the
+// prediction against the raw forecast and the actual low.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tonight_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_at TEXT NOT NULL,
+    snapshot_id INTEGER REFERENCES forecast_snapshots(id),
+    station_temp_f REAL,
+    offset_f REAL,
+    forecast_low_f REAL,
+    forecast_low_at TEXT,
+    predicted_low_f REAL,
+    response_text TEXT NOT NULL
+  )
+`);
+
 export default db;
