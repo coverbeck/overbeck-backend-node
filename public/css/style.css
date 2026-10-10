@@ -176,3 +176,33 @@ main {
   color: inherit;
   font-weight: bold;
 }
+
+.chart-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.chart-options span {
+  min-width: 7.5rem;
+}
+
+.chart-options a {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.chart-options a:hover {
+  background: #f3f3f3;
+}
+
+.chart-options a.active {
+  background: #202020;
+  border-color: #202020;
+  color: #fff;
+}

@@ -7,7 +7,7 @@ import { marked } from 'marked';
 import db from '../db/index.ts';
 import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
-import { getForecastComparison } from '../forecastComparison.ts';
+import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
@@ -62,9 +62,15 @@ router.get('/weather', async (req: Request, res: Response) => {
 
 router.get('/weather/forecast', (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
+  const days = RANGE_DAYS.find((d) => d === Number(req.query.days)) ?? 1;
+  const lead = LEAD_HOURS.find((h) => h === Number(req.query.lead)) ?? 0;
   res.render('weather-forecast.njk', {
     activeTab: 'forecast',
-    comparison: getForecastComparison(new Date()),
+    days,
+    lead,
+    rangeDays: RANGE_DAYS,
+    leadHours: LEAD_HOURS,
+    comparison: getForecastComparison(new Date(), days, lead),
   });
 });
 

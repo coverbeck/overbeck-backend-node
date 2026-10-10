@@ -2,6 +2,8 @@
 
 {% block title %}Weather Forecast{% endblock %}
 
+{% macro leadLabel(hours) %}{% if hours == 0 %}Latest{% else %}{{ hours }} h ahead{% endif %}{% endmacro %}
+
 {% block content %}
 <h1>My Weather</h1>
 {% include "partials/weather-tabs.njk" %}
@@ -9,14 +11,67 @@
 <p>
   Forecasts for my station's location from four sources, saved every hour, alongside
   what the station actually recorded. Left of the dashed "now" line, each forecast line
-  shows the latest forecast made before that hour; right of it, the current forecast.
+  shows what the source predicted in advance for that hour; right of it, its forecast
+  for the hours ahead. Shading marks overnight, 10pm to 8am.
 </p>
 
-{% if comparison.sources.length %}
+<div class="chart-options">
+  <span>Range:</span>
+  {% for d in rangeDays %}
+  <a href="?days={{ d }}&amp;lead={{ lead }}"{% if d == days %} class="active" aria-current="true"{% endif %}>{{ d }} day{% if d > 1 %}s{% endif %}</a>
+  {% endfor %}
+</div>
+<div class="chart-options">
+  <span>Forecast made:</span>
+  {% for h in leadHours %}
+  <a href="?days={{ days }}&amp;lead={{ h }}"{% if h == lead %} class="active" aria-current="true"{% endif %}>{{ leadLabel(h) }}</a>
+  {% endfor %}
+</div>
+<p class="hint">
+  {% if lead == 0 %}
+  "Latest" uses the newest forecast made before each hour.
+  {% else %}
+  "{{ leadLabel(lead) }}" uses the newest forecast made at least {{ lead }} hours before each hour,
+  the forecast you'd have had that far in advance.
+  {% endif %}
+  Click a legend entry to show or hide a line; the four individual forecasts start hidden.
+</p>
+
+{% if comparison.lines.length %}
 <h2>Temperature</h2>
 <div style="max-width: 900px">
   <canvas id="temp-chart"></canvas>
 </div>
+
+{% if comparison.scores.length %}
+<h3>How the forecasts did</h3>
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr><th>Forecast</th><th>Hours</th><th>Bias</th><th>Avg miss</th></tr>
+    </thead>
+    <tbody>
+      {% for row in comparison.scores %}
+      <tr><td>{{ row.label }}</td><td>{{ row.hours }}</td><td>{{ row.bias }}</td><td>{{ row.miss }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="hint">
+  Temperature over the past hours in the range, against the station's reading at the top
+  of each hour. Bias is the average of forecast minus actual (positive means the forecast
+  ran warm); avg miss is the average size of the error either way. The average is an
+  equal-weight mean of the four sources.
+</p>
+{% endif %}
+
+<h2>Dew point</h2>
+<div style="max-width: 900px">
+  <canvas id="dewpoint-chart"></canvas>
+</div>
+<p class="hint">
+  When the temperature falls to near the dew point, fog or dew is likely.
+</p>
 
 <h2>Clouds</h2>
 <div style="max-width: 900px">
@@ -24,7 +79,8 @@
 </div>
 <p class="hint">
   Solid lines are total cloud cover; dashed lines are low cloud (fog and marine layer),
-  which only HRRR and ECMWF forecast. Station humidity near 100% usually means fog.
+  which only HRRR and ECMWF forecast, so the average leaves it out. Station humidity near
+  100% usually means fog.
 </p>
 
 <p class="hint">
@@ -64,22 +120,43 @@
   }
 
   const comparison = {{ comparison | dump | safe }};
-  const COLORS = { nws: '#1a73e8', om_hrrr: '#d93025', om_nbm: '#188038', om_ecmwf: '#e37400' };
+  const days = {{ days }};
+  const COLORS = {
+    average: '#8a8a8a',
+    nws: '#1a73e8',
+    om_hrrr: '#d93025',
+    om_nbm: '#188038',
+    om_ecmwf: '#e37400',
+  };
   const STATION_COLOR = '#202020';
 
-  // Dashed vertical line at the current time.
-  const nowLine = {
-    id: 'nowLine',
+  // Overnight shading behind the lines, and a dashed vertical line at the current time.
+  const overlays = {
+    id: 'overlays',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea } = chart;
+      const x = chart.scales.x;
+      ctx.save();
+      ctx.fillStyle = 'rgba(60, 80, 140, 0.08)';
+      for (const night of comparison.nights) {
+        const left = Math.max(x.getPixelForValue(Date.parse(night.start)), chartArea.left);
+        const right = Math.min(x.getPixelForValue(Date.parse(night.end)), chartArea.right);
+        if (right > left) {
+          ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+        }
+      }
+      ctx.restore();
+    },
     afterDatasetsDraw(chart) {
-      const x = chart.scales.x.getPixelForValue(Date.parse(comparison.now));
+      const nowX = chart.scales.x.getPixelForValue(Date.parse(comparison.now));
       const { top, bottom } = chart.chartArea;
       const { ctx } = chart;
       ctx.save();
       ctx.strokeStyle = '#888';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bottom);
+      ctx.moveTo(nowX, top);
+      ctx.lineTo(nowX, bottom);
       ctx.stroke();
       ctx.restore();
     },
@@ -89,27 +166,58 @@
     return { label, data, borderColor: color, backgroundColor: color, pointRadius: 0, borderWidth: 2, ...extra };
   }
 
+  // The average is shown and drawn thicker; the individual sources start hidden.
+  function forecastLine(forecast, label, data, extra = {}) {
+    const isAverage = forecast.key === 'average';
+    return line(label, data, COLORS[forecast.key], {
+      borderWidth: isAverage ? 3 : 2,
+      hidden: !isAverage,
+      ...extra,
+    });
+  }
+
   function chartOptions(yTitle, yExtra = {}) {
     return {
       interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
-        x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'ha' }, tooltipFormat: 'EEE h a' } },
+        x: {
+          type: 'time',
+          min: comparison.range.start,
+          max: comparison.range.end,
+          time: {
+            unit: days > 1 ? 'day' : 'hour',
+            displayFormats: { hour: 'ha', day: 'EEE M/d' },
+            tooltipFormat: 'EEE h a',
+          },
+        },
         y: { title: { display: true, text: yTitle }, ...yExtra },
       },
     };
   }
 
-  if (comparison.sources.length) {
+  if (comparison.lines.length) {
     new Chart(document.getElementById('temp-chart'), {
       type: 'line',
       data: {
         datasets: [
           line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.sources.map((s) => line(s.label, s.temp, COLORS[s.source])),
+          ...comparison.lines.map((f) => forecastLine(f, f.label, f.temp)),
         ],
       },
       options: chartOptions('°F'),
-      plugins: [nowLine],
+      plugins: [overlays],
+    });
+
+    new Chart(document.getElementById('dewpoint-chart'), {
+      type: 'line',
+      data: {
+        datasets: [
+          line('My station', comparison.station.dewpoint, STATION_COLOR, { borderWidth: 3 }),
+          ...comparison.lines.map((f) => forecastLine(f, f.label, f.dewpoint)),
+        ],
+      },
+      options: chartOptions('°F'),
+      plugins: [overlays],
     });
 
     new Chart(document.getElementById('cloud-chart'), {
@@ -117,14 +225,14 @@
       data: {
         datasets: [
           line('Station humidity', comparison.station.humidity, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.sources.map((s) => line(`${s.label} cloud cover`, s.skyCover, COLORS[s.source])),
-          ...comparison.sources
-            .filter((s) => s.lowCloud.length)
-            .map((s) => line(`${s.label} low cloud`, s.lowCloud, COLORS[s.source], { borderDash: [6, 4] })),
+          ...comparison.lines.map((f) => forecastLine(f, `${f.label} cloud cover`, f.skyCover)),
+          ...comparison.lines
+            .filter((f) => f.lowCloud.length)
+            .map((f) => forecastLine(f, `${f.label} low cloud`, f.lowCloud, { borderDash: [6, 4] })),
         ],
       },
       options: chartOptions('%', { min: 0, max: 100 }),
-      plugins: [nowLine],
+      plugins: [overlays],
     });
   }
 </script>
