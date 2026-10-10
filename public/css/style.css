@@ -149,3 +149,30 @@ main {
 .link-button[aria-expanded="true"]::before {
   content: '▾ ';
 }
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid #ccc;
+  margin-bottom: 1.5rem;
+}
+
+.tabs a {
+  padding: 0.5rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: -1px;
+  text-decoration: none;
+}
+
+.tabs a:hover {
+  background: #f3f3f3;
+}
+
+.tabs a.active {
+  border-color: #ccc;
+  border-bottom-color: #fff;
+  background: #fff;
+  color: inherit;
+  font-weight: bold;
+}

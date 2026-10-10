@@ -1,0 +1,131 @@
+{% extends "layouts/base.njk" %}
+
+{% block title %}Weather Forecast{% endblock %}
+
+{% block content %}
+<h1>My Weather</h1>
+{% include "partials/weather-tabs.njk" %}
+
+<p>
+  Forecasts for my station's location from four sources, saved every hour, alongside
+  what the station actually recorded. Left of the dashed "now" line, each forecast line
+  shows the latest forecast made before that hour; right of it, the current forecast.
+</p>
+
+{% if comparison.sources.length %}
+<h2>Temperature</h2>
+<div style="max-width: 900px">
+  <canvas id="temp-chart"></canvas>
+</div>
+
+<h2>Clouds</h2>
+<div style="max-width: 900px">
+  <canvas id="cloud-chart"></canvas>
+</div>
+<p class="hint">
+  Solid lines are total cloud cover; dashed lines are low cloud (fog and marine layer),
+  which only HRRR and ECMWF forecast. Station humidity near 100% usually means fog.
+</p>
+
+<p class="hint">
+  Forecasts last fetched: <span class="local-time" data-iso="{{ comparison.lastFetchedAt }}"></span>
+</p>
+{% else %}
+<p>No forecast data yet.</p>
+{% endif %}
+
+<h2>Sources</h2>
+<ul>
+  <li><strong>NWS</strong>: the National Weather Service's forecast for the area.</li>
+  <li><strong>HRRR</strong>: NOAA's High-Resolution Rapid Refresh model (3 km grid, updated hourly).</li>
+  <li><strong>NBM</strong>: NOAA's National Blend of Models, a blend of many models (2.5 km).</li>
+  <li><strong>ECMWF</strong>: the European Centre's global model (about 25 km).</li>
+</ul>
+<p class="hint">
+  Forecast data from the National Weather Service and
+  <a href="https://open-meteo.com/">Open-Meteo.com</a> (HRRR, NBM and ECMWF).
+</p>
+{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  for (const el of document.querySelectorAll('.local-time')) {
+    el.textContent = new Intl.DateTimeFormat(undefined, {
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(el.dataset.iso));
+  }
+
+  const comparison = {{ comparison | dump | safe }};
+  const COLORS = { nws: '#1a73e8', om_hrrr: '#d93025', om_nbm: '#188038', om_ecmwf: '#e37400' };
+  const STATION_COLOR = '#202020';
+
+  // Dashed vertical line at the current time.
+  const nowLine = {
+    id: 'nowLine',
+    afterDatasetsDraw(chart) {
+      const x = chart.scales.x.getPixelForValue(Date.parse(comparison.now));
+      const { top, bottom } = chart.chartArea;
+      const { ctx } = chart;
+      ctx.save();
+      ctx.strokeStyle = '#888';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
+  function line(label, data, color, extra = {}) {
+    return { label, data, borderColor: color, backgroundColor: color, pointRadius: 0, borderWidth: 2, ...extra };
+  }
+
+  function chartOptions(yTitle, yExtra = {}) {
+    return {
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { type: 'time', time: { unit: 'hour', displayFormats: { hour: 'ha' }, tooltipFormat: 'EEE h a' } },
+        y: { title: { display: true, text: yTitle }, ...yExtra },
+      },
+    };
+  }
+
+  if (comparison.sources.length) {
+    new Chart(document.getElementById('temp-chart'), {
+      type: 'line',
+      data: {
+        datasets: [
+          line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
+          ...comparison.sources.map((s) => line(s.label, s.temp, COLORS[s.source])),
+        ],
+      },
+      options: chartOptions('°F'),
+      plugins: [nowLine],
+    });
+
+    new Chart(document.getElementById('cloud-chart'), {
+      type: 'line',
+      data: {
+        datasets: [
+          line('Station humidity', comparison.station.humidity, STATION_COLOR, { borderWidth: 3 }),
+          ...comparison.sources.map((s) => line(`${s.label} cloud cover`, s.skyCover, COLORS[s.source])),
+          ...comparison.sources
+            .filter((s) => s.lowCloud.length)
+            .map((s) => line(`${s.label} low cloud`, s.lowCloud, COLORS[s.source], { borderDash: [6, 4] })),
+        ],
+      },
+      options: chartOptions('%', { min: 0, max: 100 }),
+      plugins: [nowLine],
+    });
+  }
+</script>
+{% endblock %}

@@ -7,6 +7,7 @@ import { marked } from 'marked';
 import db from '../db/index.ts';
 import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
+import { getForecastComparison } from '../forecastComparison.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
@@ -28,10 +29,6 @@ interface LochLomondRow {
 
 router.get('/weather', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
-  const readings = db.prepare(
-    'SELECT recording_date, percent_full FROM loch_lomond ORDER BY recording_date'
-  ).all() as LochLomondRow[];
-
   let weather: WeatherReading | null = null;
   let weatherError: string | null = null;
   try {
@@ -52,17 +49,37 @@ router.get('/weather', async (req: Request, res: Response) => {
   )).filter((s): s is PublicStationReading & { group: 'derby' | 'brommer' } => Boolean(s));
 
   res.render('weather.njk', {
+    activeTab: 'current',
     weather,
     weatherError,
-    labels: readings.map((r) => r.recording_date),
-    values: readings.map((r) => r.percent_full),
-    lastChecked: readings.length ? formatFriendlyDate(readings[readings.length - 1].recording_date) : null,
-    lochLomondCheckin: getJobCheckin('loch-lomond'),
     googleMapsApiKey,
     weatherMapLat,
     weatherMapLon,
     referenceStations,
     parks: PARKS,
+  });
+});
+
+router.get('/weather/forecast', (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  res.render('weather-forecast.njk', {
+    activeTab: 'forecast',
+    comparison: getForecastComparison(new Date()),
+  });
+});
+
+router.get('/weather/loch-lomond', (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  const readings = db.prepare(
+    'SELECT recording_date, percent_full FROM loch_lomond ORDER BY recording_date'
+  ).all() as LochLomondRow[];
+
+  res.render('weather-loch-lomond.njk', {
+    activeTab: 'loch-lomond',
+    labels: readings.map((r) => r.recording_date),
+    values: readings.map((r) => r.percent_full),
+    lastChecked: readings.length ? formatFriendlyDate(readings[readings.length - 1].recording_date) : null,
+    lochLomondCheckin: getJobCheckin('loch-lomond'),
   });
 });
 

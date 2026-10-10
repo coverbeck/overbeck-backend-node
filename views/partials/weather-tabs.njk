@@ -1,0 +1,6 @@
+{# Tab bar shared by the weather pages. Each tab is its own page; activeTab marks the current one. #}
+<div class="tabs" role="navigation" aria-label="Weather pages">
+  <a href="/weather"{% if activeTab == 'current' %} class="active" aria-current="page"{% endif %}>Current</a>
+  <a href="/weather/forecast"{% if activeTab == 'forecast' %} class="active" aria-current="page"{% endif %}>Forecast</a>
+  <a href="/weather/loch-lomond"{% if activeTab == 'loch-lomond' %} class="active" aria-current="page"{% endif %}>Loch Lomond</a>
+</div>
