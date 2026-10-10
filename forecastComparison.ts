@@ -57,6 +57,19 @@ export interface TimeRange {
   end: string; // ISO
 }
 
+// One source's temperature forecast at each lead, for comparing how a forecast
+// changes as the hour gets closer.
+export interface LeadSeries {
+  lead: LeadHours;
+  temp: ChartPoint[];
+}
+
+export interface LeadComparison {
+  key: LineKey;
+  label: string;
+  leads: LeadSeries[];
+}
+
 export interface ForecastComparison {
   now: string; // ISO
   range: TimeRange; // the charts' x axis
@@ -65,6 +78,7 @@ export interface ForecastComparison {
   station: { temp: ChartPoint[]; dewpoint: ChartPoint[]; humidity: ChartPoint[] };
   lines: ForecastLine[]; // the average first, then each source
   scores: ScoreRow[]; // temperature, best first
+  leadComparison: LeadComparison[]; // same order as lines
 }
 
 interface ForecastRow {
@@ -208,11 +222,9 @@ function overnightBands(startMs: number, endMs: number): TimeRange[] {
   return bands;
 }
 
-export function getForecastComparison(now: Date, days: RangeDays, leadHours: LeadHours): ForecastComparison {
-  const startMs = startOfHour(now).getTime() - days * 24 * HOUR_MS;
-  const endMs = startOfHour(now).getTime() + FORECAST_HOURS * HOUR_MS;
-  const start = toSqliteUtc(new Date(startMs));
-
+// The average line followed by each source's line, from `start` on, using for each
+// hour the latest forecast made at least leadHours before it.
+function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
   // Ordered by fetch time, so for each source and hour the last row seen is the
   // latest forecast made at least leadHours before that hour.
   const rows = db.prepare(`
@@ -239,7 +251,24 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
       sourceLines.push(sourceLine(source, hours));
     }
   }
-  const lines = sourceLines.length ? [averageLine(sourceLines), ...sourceLines] : [];
+  return sourceLines.length ? [averageLine(sourceLines), ...sourceLines] : [];
+}
+
+export function getForecastComparison(now: Date, days: RangeDays, leadHours: LeadHours): ForecastComparison {
+  const startMs = startOfHour(now).getTime() - days * 24 * HOUR_MS;
+  const endMs = startOfHour(now).getTime() + FORECAST_HOURS * HOUR_MS;
+  const start = toSqliteUtc(new Date(startMs));
+
+  const linesByLead = new Map(LEAD_HOURS.map((lead) => [lead, forecastLines(start, lead)]));
+  const lines = linesByLead.get(leadHours) ?? [];
+  const leadComparison = lines.map((line) => ({
+    key: line.key,
+    label: line.label,
+    leads: LEAD_HOURS.map((lead) => ({
+      lead,
+      temp: linesByLead.get(lead)?.find((other) => other.key === line.key)?.temp ?? [],
+    })),
+  }));
 
   const stationRows = db.prepare(
     'SELECT observed_at, temp_f, dewpoint_f, humidity_pct FROM station_readings WHERE observed_at >= ? ORDER BY observed_at'
@@ -270,5 +299,6 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
     },
     lines,
     scores,
+    leadComparison,
   };
 }

@@ -189,19 +189,26 @@ main {
   min-width: 7.5rem;
 }
 
-.chart-options a {
+.chart-options a,
+.chart-options button {
   padding: 0.15rem 0.6rem;
   border: 1px solid #ccc;
   border-radius: 999px;
+  background: #fff;
+  color: inherit;
   text-decoration: none;
+  font: inherit;
   font-size: 0.9rem;
+  cursor: pointer;
 }
 
-.chart-options a:hover {
+.chart-options a:hover,
+.chart-options button:hover {
   background: #f3f3f3;
 }
 
-.chart-options a.active {
+.chart-options a.active,
+.chart-options button.active {
   background: #202020;
   border-color: #202020;
   color: #fff;
