@@ -87,7 +87,9 @@
 <p class="hint">
   How far the air is from saturation. When the temperature falls to within
   {{ comparison.fogSpreadF }}°F of the dew point (the shaded band at the bottom), dew or
-  fog is likely. Forecast lines use each source's own temperature and dew point.
+  fog is likely. Forecast lines use each source's own temperature and dew point. The
+  faint dashed line is the station's temperature, on the right-hand scale; hover over a
+  point to see the temperature and dew point behind each gap.
 </p>
 
 <h2>Clouds</h2>
@@ -287,15 +289,58 @@
       },
     };
 
+    // Temperature and dew point by timestamp, for the tooltip of each gap line.
+    function readings(temp, dewpoint) {
+      const byX = new Map(temp.map((p) => [p.x, { temp: p.y, dewpoint: null }]));
+      for (const p of dewpoint) {
+        const r = byX.get(p.x);
+        if (r) r.dewpoint = p.y;
+      }
+      return byX;
+    }
+
+    const degrees = (v) => (v === null || v === undefined ? '–' : `${v.toFixed(1)}°`);
+
+    const spreadOptions = chartOptions('°F above dew point', { min: 0 });
+    spreadOptions.scales.y2 = {
+      position: 'right',
+      title: { display: true, text: 'Station temperature (°F)' },
+      grid: { drawOnChartArea: false },
+    };
+    spreadOptions.plugins = {
+      tooltip: {
+        callbacks: {
+          label(item) {
+            const { dataset, raw } = item;
+            if (!dataset.readings) return `${dataset.label}: ${degrees(raw.y)}`;
+            const r = dataset.readings.get(raw.x);
+            const detail = r ? ` (temp ${degrees(r.temp)}, dew pt ${degrees(r.dewpoint)})` : '';
+            return `${dataset.label}: gap ${degrees(raw.y)}${detail}`;
+          },
+        },
+      },
+    };
+
+    const TEMP_COLOR = 'rgba(32, 32, 32, 0.35)';
     new Chart(document.getElementById('spread-chart'), {
       type: 'line',
       data: {
         datasets: [
-          line('My station', comparison.station.spread, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.lines.map((f) => forecastLine(f, f.label, f.spread)),
+          line('My station', comparison.station.spread, STATION_COLOR, {
+            borderWidth: 3,
+            readings: readings(comparison.station.temp, comparison.station.dewpoint),
+          }),
+          ...comparison.lines.map((f) =>
+            forecastLine(f, f.label, f.spread, { readings: readings(f.temp, f.dewpoint) })
+          ),
+          line('My station temperature (right axis)', comparison.station.temp, TEMP_COLOR, {
+            yAxisID: 'y2',
+            borderWidth: 1.5,
+            borderDash: [4, 3],
+          }),
         ],
       },
-      options: chartOptions('°F', { min: 0 }),
+      options: spreadOptions,
       plugins: [overlays, fogBand],
     });
 

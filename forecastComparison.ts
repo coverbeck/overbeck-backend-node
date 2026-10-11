@@ -83,7 +83,7 @@ export interface ForecastComparison {
   range: TimeRange; // the charts' x axis
   nights: TimeRange[]; // overnight (10pm–8am Pacific) bands within the range
   lastFetchedAt: string | null; // ISO
-  station: { temp: ChartPoint[]; spread: ChartPoint[]; humidity: ChartPoint[] };
+  station: { temp: ChartPoint[]; dewpoint: ChartPoint[]; spread: ChartPoint[]; humidity: ChartPoint[] };
   lines: ForecastLine[]; // the average first, then each source
   scores: ScoreRow[]; // best temperature first
   fogSpreadF: number;
@@ -326,6 +326,7 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
     lastFetchedAt: lastFetchedAt && toIso(lastFetchedAt),
     station: {
       temp: stationSeries((row) => row.temp_f),
+      dewpoint: stationSeries((row) => row.dewpoint_f),
       spread: stationSeries((row) => spread(row.temp_f, row.dewpoint_f)),
       humidity: stationSeries((row) => row.humidity_pct),
     },
