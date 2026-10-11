@@ -80,7 +80,7 @@
   <canvas id="lead-chart"></canvas>
 </div>
 
-<h2>Temperature minus dew point</h2>
+<h2>Gap between temperature and dew point</h2>
 <div style="max-width: 900px">
   <canvas id="spread-chart"></canvas>
 </div>
@@ -315,7 +315,7 @@
             if (!dataset.readings) return `${dataset.label}: ${degrees(raw.y)}`;
             const r = dataset.readings.get(raw.x);
             const detail = r ? ` (temp ${degrees(r.temp)}, dew pt ${degrees(r.dewpoint)})` : '';
-            return `${dataset.label}: gap ${degrees(raw.y)}${detail}`;
+            return `${dataset.label}: ${degrees(raw.y)}${detail}`;
           },
         },
       },
@@ -326,12 +326,12 @@
       type: 'line',
       data: {
         datasets: [
-          line('My station', comparison.station.spread, STATION_COLOR, {
+          line('My station gap', comparison.station.spread, STATION_COLOR, {
             borderWidth: 3,
             readings: readings(comparison.station.temp, comparison.station.dewpoint),
           }),
           ...comparison.lines.map((f) =>
-            forecastLine(f, f.label, f.spread, { readings: readings(f.temp, f.dewpoint) })
+            forecastLine(f, `${f.label} gap`, f.spread, { readings: readings(f.temp, f.dewpoint) })
           ),
           line('My station temperature (right axis)', comparison.station.temp, TEMP_COLOR, {
             yAxisID: 'y2',
