@@ -48,19 +48,19 @@
 <div class="table-scroll">
   <table class="data-table">
     <thead>
-      <tr><th>Forecast</th><th>Hours</th><th>Bias</th><th>Avg miss</th></tr>
+      <tr><th>Forecast</th><th>Hours</th><th>Temp bias</th><th>Temp miss</th><th>Dew pt bias</th><th>Dew pt miss</th></tr>
     </thead>
     <tbody>
       {% for row in comparison.scores %}
-      <tr><td>{{ row.label }}</td><td>{{ row.hours }}</td><td>{{ row.bias }}</td><td>{{ row.miss }}</td></tr>
+      <tr><td>{{ row.label }}</td><td>{{ row.hours }}</td><td>{{ row.tempBias }}</td><td>{{ row.tempMiss }}</td><td>{{ row.dewpointBias }}</td><td>{{ row.dewpointMiss }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 <p class="hint">
-  Temperature over the past hours in the range, against the station's reading at the top
-  of each hour. Bias is the average of forecast minus actual (positive means the forecast
-  ran warm); avg miss is the average size of the error either way. The average is an
+  Past hours in the range, against the station's reading at the top of each hour, sorted
+  by temperature miss. Bias is the average of forecast minus actual (positive means the
+  forecast ran high); miss is the average size of the error either way. The average is an
   equal-weight mean of the four sources.
 </p>
 {% endif %}
@@ -80,12 +80,14 @@
   <canvas id="lead-chart"></canvas>
 </div>
 
-<h2>Dew point</h2>
+<h2>Temperature minus dew point</h2>
 <div style="max-width: 900px">
-  <canvas id="dewpoint-chart"></canvas>
+  <canvas id="spread-chart"></canvas>
 </div>
 <p class="hint">
-  When the temperature falls to near the dew point, fog or dew is likely.
+  How far the air is from saturation. When the temperature falls to within
+  {{ comparison.fogSpreadF }}°F of the dew point (the shaded band at the bottom), dew or
+  fog is likely. Forecast lines use each source's own temperature and dew point.
 </p>
 
 <h2>Clouds</h2>
@@ -266,16 +268,35 @@
       });
     }
 
-    new Chart(document.getElementById('dewpoint-chart'), {
+    // Band from 0 up to the fog threshold, drawn behind the lines.
+    const fogBand = {
+      id: 'fogBand',
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        const y = chart.scales.y;
+        const top = Math.max(y.getPixelForValue(comparison.fogSpreadF), chartArea.top);
+        const bottom = Math.min(y.getPixelForValue(0), chartArea.bottom);
+        ctx.save();
+        ctx.fillStyle = 'rgba(120, 120, 120, 0.15)';
+        ctx.fillRect(chartArea.left, top, chartArea.right - chartArea.left, bottom - top);
+        ctx.fillStyle = '#555';
+        ctx.font = '12px sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Dew or fog likely', chartArea.left + 6, (top + bottom) / 2);
+        ctx.restore();
+      },
+    };
+
+    new Chart(document.getElementById('spread-chart'), {
       type: 'line',
       data: {
         datasets: [
-          line('My station', comparison.station.dewpoint, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.lines.map((f) => forecastLine(f, f.label, f.dewpoint)),
+          line('My station', comparison.station.spread, STATION_COLOR, { borderWidth: 3 }),
+          ...comparison.lines.map((f) => forecastLine(f, f.label, f.spread)),
         ],
       },
-      options: chartOptions('°F'),
-      plugins: [overlays],
+      options: chartOptions('°F', { min: 0 }),
+      plugins: [overlays, fogBand],
     });
 
     new Chart(document.getElementById('cloud-chart'), {
