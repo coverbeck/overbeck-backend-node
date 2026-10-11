@@ -4,12 +4,17 @@
 // run (or a server outage) is filled in by the next one. On an empty table it
 // starts with the last day of readings.
 //
-//   node --env-file=.env scripts/collect-station.ts
+// With --from YYYY-MM-DD (UTC), it first fills in history from that date up to the
+// oldest stored reading, one request per 23 hours at about 1 per second (from
+// 2024-01-19, about 1,000 requests and 20 minutes), then catches up as usual.
+//
+//   node --env-file=.env scripts/collect-station.ts [--from YYYY-MM-DD]
 
+import { parseArgs } from 'node:util';
 import db from '../db/index.ts';
 import { getStationHistory, getStationMac } from '../weather.ts';
 import type { StationReading } from '../weather.ts';
-import { fromSqliteUtc } from '../forecast.ts';
+import { fromSqliteUtc, toSqliteUtc } from '../forecast.ts';
 
 const JOB_NAME = 'backyard-station';
 
@@ -52,12 +57,40 @@ const saveReadings = db.transaction((readings: StationReading[]) => {
   return inserted;
 });
 
-async function run(): Promise<string> {
+// Readings from fromMs up to the oldest stored one (or now, on an empty table).
+async function backfill(mac: string, fromMs: number): Promise<{ requests: number; inserted: number }> {
+  const { oldest } = db.prepare(
+    'SELECT MIN(observed_at) AS oldest FROM station_readings'
+  ).get() as { oldest: string | null };
+  const untilMs = oldest ? fromSqliteUtc(oldest).getTime() : Date.now();
+
+  let requests = 0;
+  let inserted = 0;
+  for (let endMs = fromMs + STEP_MS; endMs - STEP_MS < untilMs; endMs += STEP_MS) {
+    inserted += saveReadings(await getStationHistory(mac, new Date(Math.min(endMs, untilMs))));
+    requests++;
+    if (requests % 100 === 0) {
+      log(`backfill: ${requests} requests, ${inserted} readings, through ${toSqliteUtc(new Date(endMs))}`);
+    }
+  }
+  return { requests, inserted };
+}
+
+async function run(fromDate: string | undefined): Promise<string> {
+  if (fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    throw new Error(`--from must be YYYY-MM-DD, got ${fromDate}`);
+  }
+  const mac = await getStationMac();
+  let backfillSummary = '';
+  if (fromDate) {
+    const { requests, inserted } = await backfill(mac, fromSqliteUtc(`${fromDate} 00:00:00`).getTime());
+    backfillSummary = `backfilled ${inserted} readings from ${fromDate} in ${requests} requests; `;
+  }
+
   const { latest } = db.prepare(
     'SELECT MAX(observed_at) AS latest FROM station_readings'
   ).get() as { latest: string | null };
 
-  const mac = await getStationMac();
   const nowMs = Date.now();
   let endMs = latest ? Math.min(fromSqliteUtc(latest).getTime() + STEP_MS, nowMs) : nowMs;
   let requests = 0;
@@ -74,11 +107,12 @@ async function run(): Promise<string> {
   const { newest } = db.prepare(
     'SELECT MAX(observed_at) AS newest FROM station_readings'
   ).get() as { newest: string | null };
-  return `inserted ${inserted} readings in ${requests} requests; newest ${newest ?? 'none'}`;
+  return `${backfillSummary}inserted ${inserted} readings in ${requests} requests; newest ${newest ?? 'none'}`;
 }
 
 try {
-  const summary = await run();
+  const { values } = parseArgs({ options: { from: { type: 'string' } } });
+  const summary = await run(values.from);
   upsertJobCheckin.run(JOB_NAME, 'ok', summary);
   log(summary);
 } catch (err) {

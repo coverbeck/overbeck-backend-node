@@ -7,6 +7,8 @@ import type { ForecastSource } from './forecast.ts';
 // end of the latest forecast. For each hour, a source's line shows the latest
 // forecast it made at least `leadHours` before that hour, so past hours show what
 // the forecast said in advance rather than a forecast fetched after the fact.
+// Leads up to 12 hours use the live fetches; the 24-hour lead uses Open-Meteo's
+// archive of day-ahead forecasts (kind 'archive_day1'), which has no NWS.
 
 const HOUR_MS = 3600 * 1000;
 const FORECAST_HOURS = 18;
@@ -18,7 +20,8 @@ const OVERNIGHT_END_HOUR = 8;
 export const FOG_SPREAD_F = 2;
 
 export const RANGE_DAYS = [1, 3, 7] as const;
-export const LEAD_HOURS = [0, 6, 12] as const;
+export const LEAD_HOURS = [0, 6, 12, 24] as const;
+const ARCHIVE_LEAD_HOURS = 24;
 export type RangeDays = (typeof RANGE_DAYS)[number];
 export type LeadHours = (typeof LEAD_HOURS)[number];
 
@@ -87,7 +90,7 @@ export interface ForecastComparison {
   lines: ForecastLine[]; // the average first, then each source
   scores: ScoreRow[]; // best temperature first
   fogSpreadF: number;
-  leadComparison: LeadComparison[]; // same order as lines
+  leadComparison: LeadComparison[]; // the average, then sources in SOURCE_ORDER
 }
 
 interface ForecastRow {
@@ -268,9 +271,13 @@ function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
     SELECT s.source, h.valid_at, h.temp_f, h.dewpoint_f, h.sky_cover_pct, h.low_cloud_pct
     FROM forecast_hours h
     JOIN forecast_snapshots s ON s.id = h.snapshot_id
-    WHERE h.valid_at >= ? AND s.fetched_at <= datetime(h.valid_at, ?)
+    WHERE h.valid_at >= ? AND s.fetched_at <= datetime(h.valid_at, ?) AND s.kind = ?
     ORDER BY s.fetched_at
-  `).all(start, `-${leadHours} hours`) as ForecastRow[];
+  `).all(
+    start,
+    `-${leadHours} hours`,
+    leadHours === ARCHIVE_LEAD_HOURS ? 'archive_day1' : 'live',
+  ) as ForecastRow[];
 
   const latest = new Map<string, ForecastRow>();
   for (const row of rows) {
@@ -298,14 +305,20 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
 
   const linesByLead = new Map(LEAD_HOURS.map((lead) => [lead, forecastLines(start, lead)]));
   const lines = linesByLead.get(leadHours) ?? [];
-  const leadComparison = lines.map((line) => ({
-    key: line.key,
-    label: line.label,
-    leads: LEAD_HOURS.map((lead) => ({
+  // Every line found at any lead (the archive has no NWS, and live data may not reach
+  // back through the whole range), with only the leads that have data.
+  const allLines = [...linesByLead.values()].flat();
+  const leadComparison = (['average', ...SOURCE_ORDER] as LineKey[]).flatMap((key) => {
+    const line = allLines.find((l) => l.key === key);
+    if (!line) {
+      return [];
+    }
+    const leads = LEAD_HOURS.map((lead) => ({
       lead,
-      temp: linesByLead.get(lead)?.find((other) => other.key === line.key)?.temp ?? [],
-    })),
-  }));
+      temp: linesByLead.get(lead)?.find((l) => l.key === key)?.temp ?? [],
+    })).filter(({ temp }) => temp.length);
+    return [{ key, label: line.label, leads }];
+  });
 
   const stationRows = db.prepare(
     'SELECT observed_at, temp_f, dewpoint_f, humidity_pct FROM station_readings WHERE observed_at >= ? ORDER BY observed_at'
@@ -313,7 +326,7 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
   const scores = scoreRows(lines, stationRows, now.getTime());
 
   const { lastFetchedAt } = db.prepare(
-    'SELECT MAX(fetched_at) AS lastFetchedAt FROM forecast_snapshots'
+    "SELECT MAX(fetched_at) AS lastFetchedAt FROM forecast_snapshots WHERE kind = 'live'"
   ).get() as { lastFetchedAt: string | null };
 
   const stationSeries = (value: (row: StationRow) => number | null): ChartPoint[] =>

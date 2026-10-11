@@ -1,6 +1,7 @@
 # Backyard Weather collection, run on the Lightsail server as the user that owns
-# ~/overbeck-backend-node. Forecasts at :05, station readings at :10. flock -n
-# skips a run if the previous one is still going. Each run logs one line.
+# ~/overbeck-backend-node. Forecasts at :05, station readings at :10, Open-Meteo's
+# day-ahead forecast archive at :15 (its first run backfills from 2024-01-19).
+# flock -n skips a run if the previous one is still going. Each run logs one line.
 #
 # Install (crontab FILE replaces the whole crontab, so check for existing entries):
 #   mkdir -p ~/logs
@@ -10,3 +11,4 @@
 
 5 * * * * flock -n /tmp/backyard-forecasts.lock $HOME/overbeck-backend-node/cron/run-script.sh scripts/collect-forecasts.ts >> $HOME/logs/backyard-forecasts.log 2>&1
 10 * * * * flock -n /tmp/backyard-station.lock $HOME/overbeck-backend-node/cron/run-script.sh scripts/collect-station.ts >> $HOME/logs/backyard-station.log 2>&1
+15 * * * * flock -n /tmp/backyard-forecast-archive.lock $HOME/overbeck-backend-node/cron/run-script.sh scripts/collect-forecast-archive.ts >> $HOME/logs/backyard-forecast-archive.log 2>&1

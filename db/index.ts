@@ -128,16 +128,32 @@ db.exec(`
 // One row per forecast fetch, per source/model. Every hourly fetch is kept even
 // when the source hasn't updated, since "what did the forecast say at 9pm" is
 // what gets evaluated.
+//
+// kind 'live' is a fetch by collect-forecasts.ts. kind 'archive_day1' is one hour
+// from Open-Meteo's archive of forecasts made about a day ahead (its
+// `_previous_day1` values), loaded by collect-forecast-archive.ts: one snapshot per
+// source and hour, with fetched_at set to that hour minus 24 hours. Keep the two
+// apart in queries; the archive's lead time doesn't match any live fetch.
 db.exec(`
   CREATE TABLE IF NOT EXISTS forecast_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL CHECK (source IN ('nws', 'om_hrrr', 'om_nbm', 'om_ecmwf')),
     fetched_at TEXT NOT NULL,
     issued_at TEXT,
+    kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'archive_day1')),
     created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(source, fetched_at)
   )
 `);
+
+const forecastSnapshotColumns = new Set(
+  (db.prepare('PRAGMA table_info(forecast_snapshots)').all() as { name: string }[]).map((c) => c.name)
+);
+if (!forecastSnapshotColumns.has('kind')) {
+  db.exec(
+    "ALTER TABLE forecast_snapshots ADD COLUMN kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'archive_day1'))"
+  );
+}
 
 // The next 18 hours of each snapshot, converted to °F / mph to match
 // station_readings. low_cloud_pct is null for NWS (not forecast) and NBM
