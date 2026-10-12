@@ -212,9 +212,35 @@
     });
   }
 
+  // Hover shows every visible line at the pointer's time: each line's point nearest
+  // that time, if one is within 30 minutes. The built-in modes don't fit, since the
+  // station has a point every 5 minutes and the forecasts one an hour, so the
+  // nearest point overall is nearly always the station's.
+  const SAME_TIME_MS = 30 * 60 * 1000;
+  Chart.Interaction.modes.sameTime = (chart, event) => {
+    const time = chart.scales.x.getValueForPixel(event.x);
+    const items = [];
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      if (!chart.isDatasetVisible(datasetIndex)) return;
+      let nearest = -1;
+      let nearestDistance = Infinity;
+      dataset.data.forEach((point, index) => {
+        const distance = Math.abs(Date.parse(point.x) - time);
+        if (point.y !== null && distance < nearestDistance) {
+          nearest = index;
+          nearestDistance = distance;
+        }
+      });
+      if (nearest >= 0 && nearestDistance <= SAME_TIME_MS) {
+        items.push({ element: chart.getDatasetMeta(datasetIndex).data[nearest], datasetIndex, index: nearest });
+      }
+    });
+    return items;
+  };
+
   function chartOptions(yTitle, yExtra = {}) {
     return {
-      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      interaction: { mode: 'sameTime', intersect: false },
       scales: {
         x: {
           type: 'time',
