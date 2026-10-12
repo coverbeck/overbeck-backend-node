@@ -1,6 +1,7 @@
 import db from './db/index.ts';
 import { fromSqliteUtc, startOfHour, toSqliteUtc } from './forecast.ts';
 import type { ForecastSource } from './forecast.ts';
+import { sunEventsBetween } from './sun.ts';
 
 // Data for the /weather/forecast charts: the station's readings over the last few
 // days alongside each source's forecast, from the start of the range through the
@@ -13,8 +14,6 @@ import type { ForecastSource } from './forecast.ts';
 const HOUR_MS = 3600 * 1000;
 const FORECAST_HOURS = 18;
 const MATCH_MS = 5 * 60 * 1000; // a station reading within 5 minutes counts as "at" the hour
-const OVERNIGHT_START_HOUR = 22; // Pacific, matches the Siri answer's window
-const OVERNIGHT_END_HOUR = 8;
 
 // Temperature within this many °F of the dew point: dew or fog likely.
 export const FOG_SPREAD_F = 2;
@@ -69,6 +68,14 @@ export interface TimeRange {
   end: string; // ISO
 }
 
+// Night (dusk to dawn) and civil twilight bands within the range, plus each sunrise
+// and sunset in it for the tooltips.
+export interface SunBands {
+  night: TimeRange[];
+  twilight: TimeRange[];
+  events: { type: 'sunrise' | 'sunset'; at: string }[]; // at: ISO
+}
+
 // One source's temperature forecast at each lead, for comparing how a forecast
 // changes as the hour gets closer.
 export interface LeadSeries {
@@ -85,7 +92,7 @@ export interface LeadComparison {
 export interface ForecastComparison {
   now: string; // ISO
   range: TimeRange; // the charts' x axis
-  nights: TimeRange[]; // overnight (10pm–8am Pacific) bands within the range
+  sun: SunBands;
   lastFetchedAt: string | null; // ISO
   station: { temp: ChartPoint[]; dewpoint: ChartPoint[]; spread: ChartPoint[]; humidity: ChartPoint[] };
   lines: ForecastLine[]; // the average first, then our estimate, then each source
@@ -239,28 +246,25 @@ function scoreRows(lines: ForecastLine[], stationRows: StationRow[], nowMs: numb
     }));
 }
 
-const pacificHour = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Los_Angeles',
-  hour: 'numeric',
-  hourCycle: 'h23',
-});
-
-// Overnight bands, found hour by hour in Pacific time so daylight saving is handled.
-function overnightBands(startMs: number, endMs: number): TimeRange[] {
-  const bands: TimeRange[] = [];
-  let bandStart: number | null = null;
-  for (let ms = startMs; ms < endMs; ms += HOUR_MS) {
-    const hour = Number(pacificHour.format(new Date(ms)));
-    const overnight = hour >= OVERNIGHT_START_HOUR || hour < OVERNIGHT_END_HOUR;
-    if (overnight && bandStart === null) {
-      bandStart = ms;
-    } else if (!overnight && bandStart !== null) {
-      bands.push({ start: new Date(bandStart).toISOString(), end: new Date(ms).toISOString() });
-      bandStart = null;
+// Bands between consecutive sun events, clipped to the range: dusk to dawn is
+// night, dawn to sunrise and sunset to dusk are twilight. Events from a day either
+// side give the bands that start or end outside the range.
+function sunBands(startMs: number, endMs: number): SunBands {
+  const events = sunEventsBetween(startMs - 24 * HOUR_MS, endMs + 24 * HOUR_MS);
+  const bands: SunBands = { night: [], twilight: [], events: [] };
+  for (let i = 0; i + 1 < events.length; i++) {
+    const [from, to] = [events[i], events[i + 1]];
+    const kind = from.type === 'dusk' ? bands.night : from.type === 'dawn' || from.type === 'sunset' ? bands.twilight : null;
+    const bandStart = Math.max(from.at, startMs);
+    const bandEnd = Math.min(to.at, endMs);
+    if (kind && bandStart < bandEnd) {
+      kind.push({ start: new Date(bandStart).toISOString(), end: new Date(bandEnd).toISOString() });
     }
   }
-  if (bandStart !== null) {
-    bands.push({ start: new Date(bandStart).toISOString(), end: new Date(endMs).toISOString() });
+  for (const { type, at } of events) {
+    if ((type === 'sunrise' || type === 'sunset') && at >= startMs && at <= endMs) {
+      bands.events.push({ type, at: new Date(at).toISOString() });
+    }
   }
   return bands;
 }
@@ -340,7 +344,7 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
   return {
     now: now.toISOString(),
     range: { start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString() },
-    nights: overnightBands(startMs, endMs),
+    sun: sunBands(startMs, endMs),
     lastFetchedAt: lastFetchedAt && toIso(lastFetchedAt),
     station: {
       temp: stationSeries((row) => row.temp_f),

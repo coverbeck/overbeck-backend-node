@@ -12,7 +12,8 @@
   Forecasts for my station's location from four sources, plus our own estimate, saved
   every hour, alongside what the station actually recorded. Left of the dashed "now" line, each forecast line
   shows what the source predicted in advance for that hour; right of it, its forecast
-  for the hours ahead. Shading marks overnight, 10pm to 8am.
+  for the hours ahead. Darker shading marks night, lighter shading the twilight between
+  dawn and sunrise and between sunset and dusk.
 </p>
 
 <div class="chart-options">
@@ -165,19 +166,26 @@
   };
   const STATION_COLOR = '#202020';
 
-  // Overnight shading behind the lines, and a dashed vertical line at the current time.
+  // Night and twilight shading behind the lines, and a dashed vertical line at the
+  // current time.
+  const SHADES = [
+    { bands: comparison.sun.night, fill: 'rgba(60, 80, 140, 0.12)' },
+    { bands: comparison.sun.twilight, fill: 'rgba(60, 80, 140, 0.05)' },
+  ];
   const overlays = {
     id: 'overlays',
     beforeDatasetsDraw(chart) {
       const { ctx, chartArea } = chart;
       const x = chart.scales.x;
       ctx.save();
-      ctx.fillStyle = 'rgba(60, 80, 140, 0.08)';
-      for (const night of comparison.nights) {
-        const left = Math.max(x.getPixelForValue(Date.parse(night.start)), chartArea.left);
-        const right = Math.min(x.getPixelForValue(Date.parse(night.end)), chartArea.right);
-        if (right > left) {
-          ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+      for (const { bands, fill } of SHADES) {
+        ctx.fillStyle = fill;
+        for (const band of bands) {
+          const left = Math.max(x.getPixelForValue(Date.parse(band.start)), chartArea.left);
+          const right = Math.min(x.getPixelForValue(Date.parse(band.end)), chartArea.right);
+          if (right > left) {
+            ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+          }
         }
       }
       ctx.restore();
@@ -219,6 +227,7 @@
   const SAME_TIME_MS = 30 * 60 * 1000;
   Chart.Interaction.modes.sameTime = (chart, event) => {
     const time = chart.scales.x.getValueForPixel(event.x);
+    chart.$hover = { time, event };
     const items = [];
     chart.data.datasets.forEach((dataset, datasetIndex) => {
       if (!chart.isDatasetVisible(datasetIndex)) return;
@@ -238,9 +247,24 @@
     return items;
   };
 
+  // A sunrise or sunset near the pointer, for the tooltip's footer: within 30
+  // minutes, or a few pixels on the wider ranges where 30 minutes is a sliver.
+  const SUN_LABELS = { sunrise: 'Sunrise', sunset: 'Sunset' };
+  function sunFooter(items) {
+    const chart = items[0]?.chart;
+    if (!chart?.$hover) return '';
+    const { time, event } = chart.$hover;
+    const reach = Math.max(SAME_TIME_MS, Math.abs(chart.scales.x.getValueForPixel(event.x + 6) - time));
+    return comparison.sun.events
+      .filter(({ at }) => Math.abs(Date.parse(at) - time) <= reach)
+      .map(({ type, at }) => `${SUN_LABELS[type]} ${new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`)
+      .join('\n');
+  }
+
   function chartOptions(yTitle, yExtra = {}) {
     return {
       interaction: { mode: 'sameTime', intersect: false },
+      plugins: { tooltip: { callbacks: { footer: sunFooter } } },
       scales: {
         x: {
           type: 'time',
@@ -354,18 +378,12 @@
       title: { display: true, text: 'Station temperature (°F)' },
       grid: { drawOnChartArea: false },
     };
-    spreadOptions.plugins = {
-      tooltip: {
-        callbacks: {
-          label(item) {
-            const { dataset, raw } = item;
-            if (!dataset.readings) return `${dataset.label}: ${degrees(raw.y)}`;
-            const r = dataset.readings.get(raw.x);
-            const detail = r ? ` (temp ${degrees(r.temp)}, dew pt ${degrees(r.dewpoint)})` : '';
-            return `${dataset.label}: ${degrees(raw.y)}${detail}`;
-          },
-        },
-      },
+    spreadOptions.plugins.tooltip.callbacks.label = (item) => {
+      const { dataset, raw } = item;
+      if (!dataset.readings) return `${dataset.label}: ${degrees(raw.y)}`;
+      const r = dataset.readings.get(raw.x);
+      const detail = r ? ` (temp ${degrees(r.temp)}, dew pt ${degrees(r.dewpoint)})` : '';
+      return `${dataset.label}: ${degrees(raw.y)}${detail}`;
     };
 
     const TEMP_COLOR = 'rgba(32, 32, 32, 0.35)';
