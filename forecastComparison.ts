@@ -30,8 +30,9 @@ export const SOURCE_LABELS: Record<ForecastSource, string> = {
   om_hrrr: 'HRRR',
   om_nbm: 'NBM',
   om_ecmwf: 'ECMWF',
+  estimate: 'Our estimate',
 };
-const SOURCE_ORDER: ForecastSource[] = ['nws', 'om_hrrr', 'om_nbm', 'om_ecmwf'];
+const SOURCE_ORDER: ForecastSource[] = ['estimate', 'nws', 'om_hrrr', 'om_nbm', 'om_ecmwf'];
 
 export type LineKey = ForecastSource | 'average';
 
@@ -87,10 +88,10 @@ export interface ForecastComparison {
   nights: TimeRange[]; // overnight (10pm–8am Pacific) bands within the range
   lastFetchedAt: string | null; // ISO
   station: { temp: ChartPoint[]; dewpoint: ChartPoint[]; spread: ChartPoint[]; humidity: ChartPoint[] };
-  lines: ForecastLine[]; // the average first, then each source
+  lines: ForecastLine[]; // the average first, then our estimate, then each source
   scores: ScoreRow[]; // best temperature first
   fogSpreadF: number;
-  leadComparison: LeadComparison[]; // the average, then sources in SOURCE_ORDER
+  leadComparison: LeadComparison[]; // the average, then SOURCE_ORDER
 }
 
 interface ForecastRow {
@@ -102,7 +103,7 @@ interface ForecastRow {
   low_cloud_pct: number | null;
 }
 
-interface StationRow {
+export interface StationRow {
   observed_at: string;
   temp_f: number | null;
   dewpoint_f: number | null;
@@ -128,14 +129,16 @@ function spread(temp: number | null, dewpoint: number | null): number | null {
   return temp === null || dewpoint === null ? null : Math.max(0, temp - dewpoint);
 }
 
+// Our estimate is temperature only, so its other series are left empty.
 function sourceLine(source: ForecastSource, rows: ForecastRow[]): ForecastLine {
   const series = (value: (row: ForecastRow) => number | null): ChartPoint[] =>
-    rows.map((row) => ({ x: toIso(row.valid_at), y: value(row) }));
+    source === 'estimate' ? [] : rows.map((row) => ({ x: toIso(row.valid_at), y: value(row) }));
+  const temp = rows.map((row) => ({ x: toIso(row.valid_at), y: row.temp_f }));
   const hasLowCloud = rows.some((row) => row.low_cloud_pct !== null);
   return {
     key: source,
     label: SOURCE_LABELS[source],
-    temp: series((row) => row.temp_f),
+    temp,
     dewpoint: series((row) => row.dewpoint_f),
     spread: series((row) => spread(row.temp_f, row.dewpoint_f)),
     skyCover: series((row) => row.sky_cover_pct),
@@ -195,7 +198,7 @@ function errorStats(points: ChartPoint[], actuals: Map<number, number>, nowMs: n
 }
 
 // Station value at each top of the hour: the nearest reading within 5 minutes.
-function hourlyStationValues(rows: StationRow[], value: (row: StationRow) => number | null): Map<number, number> {
+export function hourlyStationValues(rows: StationRow[], value: (row: StationRow) => number | null): Map<number, number> {
   const best = new Map<number, { distance: number; value: number }>();
   for (const row of rows) {
     const v = value(row);
@@ -263,7 +266,8 @@ function overnightBands(startMs: number, endMs: number): TimeRange[] {
 }
 
 // The average line followed by each source's line, from `start` on, using for each
-// hour the latest forecast made at least leadHours before it.
+// hour the latest forecast made at least leadHours before it. The average is of the
+// fetched forecasts only, not our estimate.
 function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
   // Ordered by fetch time, so for each source and hour the last row seen is the
   // latest forecast made at least leadHours before that hour.
@@ -295,7 +299,8 @@ function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
       sourceLines.push(sourceLine(source, hours));
     }
   }
-  return sourceLines.length ? [averageLine(sourceLines), ...sourceLines] : [];
+  const fetched = sourceLines.filter((line) => line.key !== 'estimate');
+  return fetched.length ? [averageLine(fetched), ...sourceLines] : sourceLines;
 }
 
 export function getForecastComparison(now: Date, days: RangeDays, leadHours: LeadHours): ForecastComparison {

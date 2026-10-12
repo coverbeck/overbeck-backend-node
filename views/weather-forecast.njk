@@ -9,8 +9,8 @@
 {% include "partials/weather-tabs.njk" %}
 
 <p>
-  Forecasts for my station's location from four sources, saved every hour, alongside
-  what the station actually recorded. Left of the dashed "now" line, each forecast line
+  Forecasts for my station's location from four sources, plus our own estimate, saved
+  every hour, alongside what the station actually recorded. Left of the dashed "now" line, each forecast line
   shows what the source predicted in advance for that hour; right of it, its forecast
   for the hours ahead. Shading marks overnight, 10pm to 8am.
 </p>
@@ -37,7 +37,8 @@
   "{{ leadLabel(lead) }}" uses the newest forecast made at least {{ lead }} hours before each hour,
   the forecast you'd have had that far in advance.
   {% endif %}
-  Click a legend entry to show or hide a line; the individual forecasts start hidden.
+  Click a legend entry to show or hide a line; besides the average, our estimate and
+  HRRR (the forecast it's based on), the individual forecasts start hidden.
 </p>
 
 {% if comparison.lines.length %}
@@ -64,7 +65,8 @@
   Past hours in the range, against the station's reading at the top of each hour, sorted
   by temperature miss. Bias is the average of forecast minus actual (positive means the
   forecast ran high); miss is the average size of the error either way. The average is an
-  equal-weight mean of the four sources.
+  equal-weight mean of the four sources. Our estimate is newer than the others, so it may
+  cover fewer hours.
 </p>
 {% endif %}
 
@@ -119,6 +121,13 @@
   <li><strong>HRRR</strong>: NOAA's High-Resolution Rapid Refresh model (3 km grid, updated hourly).</li>
   <li><strong>NBM</strong>: NOAA's National Blend of Models, a blend of many models (2.5 km).</li>
   <li><strong>ECMWF</strong>: the European Centre's global model (about 25 km).</li>
+  <li>
+    <strong>Our estimate</strong>: HRRR's latest temperature forecast, corrected using
+    how HRRR has done against my station over the last two weeks: its typical bias at
+    each lead time, and how much of its current error tends to carry into the hours
+    ahead. The corrections start small and get more weight as data builds up. Made
+    every hour and saved as made, so it's scored like the others.
+  </li>
 </ul>
 <p class="hint">
   Forecast data from the National Weather Service and
@@ -150,6 +159,7 @@
     om_hrrr: '#d93025',
     om_nbm: '#188038',
     om_ecmwf: '#e37400',
+    estimate: '#8e24aa',
   };
   const STATION_COLOR = '#202020';
 
@@ -189,12 +199,13 @@
     return { label, data, borderColor: color, backgroundColor: color, pointRadius: 0, borderWidth: 2, ...extra };
   }
 
-  // The average is shown and drawn thicker; the individual sources start hidden.
+  // The average and our estimate are shown and drawn thicker; the individual
+  // sources start hidden (except HRRR on the temperature chart, see below).
   function forecastLine(forecast, label, data, extra = {}) {
-    const isAverage = forecast.key === 'average';
+    const featured = forecast.key === 'average' || forecast.key === 'estimate';
     return line(label, data, COLORS[forecast.key], {
-      borderWidth: isAverage ? 3 : 2,
-      hidden: !isAverage,
+      borderWidth: featured ? 3 : 2,
+      hidden: !featured,
       ...extra,
     });
   }
@@ -224,7 +235,10 @@
       data: {
         datasets: [
           line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.lines.map((f) => forecastLine(f, f.label, f.temp)),
+          // HRRR is shown too, since our estimate is based on it.
+          ...comparison.lines.map((f) =>
+            forecastLine(f, f.label, f.temp, f.key === 'om_hrrr' ? { hidden: false } : {})
+          ),
         ],
       },
       options: chartOptions('°F'),
@@ -335,9 +349,9 @@
             borderWidth: 3,
             readings: readings(comparison.station.temp, comparison.station.dewpoint),
           }),
-          ...comparison.lines.map((f) =>
-            forecastLine(f, `${f.label} gap`, f.spread, { readings: readings(f.temp, f.dewpoint) })
-          ),
+          ...comparison.lines
+            .filter((f) => f.spread.length)
+            .map((f) => forecastLine(f, `${f.label} gap`, f.spread, { readings: readings(f.temp, f.dewpoint) })),
           line('My station temperature (right axis)', comparison.station.temp, TEMP_COLOR, {
             yAxisID: 'y2',
             borderWidth: 1.5,
@@ -354,7 +368,9 @@
       data: {
         datasets: [
           line('Station humidity', comparison.station.humidity, STATION_COLOR, { borderWidth: 3 }),
-          ...comparison.lines.map((f) => forecastLine(f, `${f.label} cloud cover`, f.skyCover)),
+          ...comparison.lines
+            .filter((f) => f.skyCover.length)
+            .map((f) => forecastLine(f, `${f.label} cloud cover`, f.skyCover)),
           ...comparison.lines
             .filter((f) => f.lowCloud.length)
             .map((f) => forecastLine(f, `${f.label} low cloud`, f.lowCloud, { borderDash: [6, 4] })),

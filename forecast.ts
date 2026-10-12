@@ -2,7 +2,8 @@
 // station history in weather.ts): the common forecast shape, SQLite time formatting,
 // and fetch with retry.
 
-export type ForecastSource = 'nws' | 'om_hrrr' | 'om_nbm' | 'om_ecmwf';
+// 'estimate' is our own corrected forecast (estimate.ts), not fetched from an API.
+export type ForecastSource = 'nws' | 'om_hrrr' | 'om_nbm' | 'om_ecmwf' | 'estimate';
 
 // One forecast hour, in the units stored in forecast_hours (°F, mph, percent).
 export interface ForecastHour {
