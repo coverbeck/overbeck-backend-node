@@ -37,8 +37,9 @@
   "{{ leadLabel(lead) }}" uses the newest forecast made at least {{ lead }} hours before each hour,
   the forecast you'd have had that far in advance.
   {% endif %}
-  Click a legend entry to show or hide a line; besides the average, our estimate and
-  HRRR (the forecast it's based on), the individual forecasts start hidden.
+  The average never includes our estimate, which is built from HRRR. Click a legend
+  entry to show or hide a line; besides the average, our estimate and HRRR, the
+  individual forecasts start hidden.
 </p>
 
 {% if comparison.lines.length %}
@@ -65,8 +66,8 @@
   Past hours in the range, against the station's reading at the top of each hour, sorted
   by temperature miss. Bias is the average of forecast minus actual (positive means the
   forecast ran high); miss is the average size of the error either way. The average is an
-  equal-weight mean of the four sources. Our estimate is newer than the others, so it may
-  cover fewer hours.
+  equal-weight mean of the four fetched sources and doesn't include our estimate. Our
+  estimate is newer than the others, so it may cover fewer hours.
 </p>
 {% endif %}
 
