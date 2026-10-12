@@ -134,17 +134,19 @@ db.exec(`
 // `_previous_day1` values), loaded by collect-forecast-archive.ts: one snapshot per
 // source and hour, with fetched_at set to that hour minus 24 hours. Keep the two
 // apart in queries; the archive's lead time doesn't match any live fetch.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS forecast_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL CHECK (source IN ('nws', 'om_hrrr', 'om_nbm', 'om_ecmwf')),
-    fetched_at TEXT NOT NULL,
-    issued_at TEXT,
-    kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'archive_day1')),
-    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(source, fetched_at)
-  )
-`);
+//
+// source 'estimate' is our own corrected forecast, saved when it's made so its
+// accuracy can be scored honestly.
+const forecastSnapshotsColumnsSql = `
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL CHECK (source IN ('nws', 'om_hrrr', 'om_nbm', 'om_ecmwf', 'estimate')),
+  fetched_at TEXT NOT NULL,
+  issued_at TEXT,
+  kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'archive_day1')),
+  created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(source, fetched_at)
+`;
+db.exec(`CREATE TABLE IF NOT EXISTS forecast_snapshots (${forecastSnapshotsColumnsSql})`);
 
 const forecastSnapshotColumns = new Set(
   (db.prepare('PRAGMA table_info(forecast_snapshots)').all() as { name: string }[]).map((c) => c.name)
@@ -153,6 +155,36 @@ if (!forecastSnapshotColumns.has('kind')) {
   db.exec(
     "ALTER TABLE forecast_snapshots ADD COLUMN kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'archive_day1'))"
   );
+}
+
+// SQLite can't change a CHECK constraint in place, so a table from before
+// 'estimate' was allowed is rebuilt: copy into a new table with the same ids (so
+// forecast_hours and tonight_predictions still point at the right rows), drop the
+// old one and rename. better-sqlite3 enforces foreign keys, and dropping the old
+// table would count as deleting the rows they point to, so they're off during the
+// rebuild (the pragma has no effect inside a transaction) and checked before commit.
+const { sql: forecastSnapshotsSql } = db
+  .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'forecast_snapshots'")
+  .get() as { sql: string };
+if (!forecastSnapshotsSql.includes("'estimate'")) {
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE forecast_snapshots_new (${forecastSnapshotsColumnsSql})`);
+      db.exec(`
+        INSERT INTO forecast_snapshots_new (id, source, fetched_at, issued_at, kind, created_timestamp)
+        SELECT id, source, fetched_at, issued_at, kind, created_timestamp FROM forecast_snapshots
+      `);
+      db.exec('DROP TABLE forecast_snapshots');
+      db.exec('ALTER TABLE forecast_snapshots_new RENAME TO forecast_snapshots');
+      const problems = db.pragma('foreign_key_check') as unknown[];
+      if (problems.length) {
+        throw new Error(`forecast_snapshots rebuild left ${problems.length} broken references`);
+      }
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
 }
 
 // The next 18 hours of each snapshot, converted to °F / mph to match
