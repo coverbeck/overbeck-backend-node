@@ -6,7 +6,14 @@
 //   node --env-file=.env scripts/collect-estimate.ts
 
 import db from '../db/index.ts';
-import { ESTIMATE_WINDOW_DAYS, estimateFromRun, fitCorrections, loadHrrrRuns, loadStationTemps } from '../estimate.ts';
+import {
+  ESTIMATE_WINDOW_DAYS,
+  estimateFromRun,
+  fitCorrections,
+  loadHourBias,
+  loadHrrrRuns,
+  loadStationTemps,
+} from '../estimate.ts';
 import type { Correction } from '../estimate.ts';
 import { startOfHour, toSqliteUtc } from '../forecast.ts';
 
@@ -60,13 +67,15 @@ function run(): string {
     throw new Error('no HRRR forecast fetched this hour');
   }
   const station = loadStationTemps(since);
-  const corrections = fitCorrections(runs, station, now.getTime());
-  const hours = estimateFromRun(latest, station, corrections);
+  const hourBias = loadHourBias(now.getTime());
+  const corrections = fitCorrections(runs, station, hourBias, now.getTime());
+  const hours = estimateFromRun(latest, station, hourBias, corrections);
   if (!hours) {
     throw new Error('no station reading at the top of the hour');
   }
   saveEstimate(toSqliteUtc(now), hours);
-  return `saved ${hours.length}h; ${corrections.map(describe).join('; ')}`;
+  const hourRange = `hour-of-day bias ${signed(Math.min(...hourBias))} to ${signed(Math.max(...hourBias))}`;
+  return `saved ${hours.length}h; ${hourRange}; ${corrections.map(describe).join('; ')}`;
 }
 
 try {

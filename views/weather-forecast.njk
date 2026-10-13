@@ -39,8 +39,8 @@
   the forecast you'd have had that far in advance.
   {% endif %}
   The average never includes our estimate, which is built from HRRR. Click a legend
-  entry to show or hide a line; besides the average, our estimate and HRRR, the
-  individual forecasts start hidden.
+  entry to show or hide a line. The temperature chart starts with just my station and
+  our estimate; the other charts start with the station and the average.
 </p>
 
 {% if comparison.lines.length %}
@@ -125,11 +125,14 @@
   <li><strong>NBM</strong>: NOAA's National Blend of Models, a blend of many models (2.5 km).</li>
   <li><strong>ECMWF</strong>: the European Centre's global model (about 25 km).</li>
   <li>
-    <strong>Our estimate</strong>: HRRR's latest temperature forecast, corrected using
-    how HRRR has done against my station over the last two weeks: its typical bias at
-    each lead time, and how much of its current error tends to carry into the hours
-    ahead. The corrections start small and get more weight as data builds up. Made
-    every hour and saved as made, so it's scored like the others.
+    <strong>Our estimate</strong>: HRRR's latest temperature forecast, corrected for
+    how HRRR's error varies by hour of the day at this time of year (from two-plus
+    years of its day-ahead forecasts against my station; for example, it runs cooler
+    than usual on fall afternoons), and for how it has done over the last two weeks:
+    its typical bias at each lead time, and how much of its current error tends to
+    carry into the hours ahead. The two-week corrections start small and get more
+    weight as data builds up. Made every hour and saved as made, so it's scored like
+    the others.
   </li>
 </ul>
 <p class="hint">
@@ -210,7 +213,7 @@
   }
 
   // The average and our estimate are shown and drawn thicker; the individual
-  // sources start hidden (except HRRR on the temperature chart, see below).
+  // sources start hidden. The temperature chart starts with only our estimate.
   function forecastLine(forecast, label, data, extra = {}) {
     const featured = forecast.key === 'average' || forecast.key === 'estimate';
     return line(label, data, COLORS[forecast.key], {
@@ -287,10 +290,8 @@
       data: {
         datasets: [
           line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
-          // HRRR is shown too, since our estimate is based on it.
-          ...comparison.lines.map((f) =>
-            forecastLine(f, f.label, f.temp, f.key === 'om_hrrr' ? { hidden: false } : {})
-          ),
+          // Only our estimate is shown at first; the average and sources are a click away.
+          ...comparison.lines.map((f) => forecastLine(f, f.label, f.temp, { hidden: f.key !== 'estimate' })),
         ],
       },
       options: chartOptions('°F'),
