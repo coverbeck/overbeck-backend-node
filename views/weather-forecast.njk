@@ -44,6 +44,13 @@
 </p>
 
 {% if comparison.lines.length %}
+<p class="hint">
+  To look closer, tap a day in the "Show" row, which stays at the top of the screen as
+  you scroll, or pinch (Ctrl-scroll on a computer) on a chart to zoom and drag sideways
+  to move along. Every chart follows.
+</p>
+<div class="chart-options zoom-bar" id="zoom-bar"></div>
+
 <h2>Temperature</h2>
 <div style="max-width: 900px">
   <canvas id="temp-chart"></canvas>
@@ -144,6 +151,8 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2/dist/chartjs-plugin-zoom.min.js"></script>
 {% endblock %}
 
 {% block scripts %}
@@ -158,7 +167,6 @@
   }
 
   const comparison = {{ comparison | dump | safe }};
-  const days = {{ days }};
   const COLORS = {
     average: '#8a8a8a',
     nws: '#1a73e8',
@@ -195,7 +203,8 @@
     },
     afterDatasetsDraw(chart) {
       const nowX = chart.scales.x.getPixelForValue(Date.parse(comparison.now));
-      const { top, bottom } = chart.chartArea;
+      const { top, bottom, left, right } = chart.chartArea;
+      if (nowX < left || nowX > right) return; // zoomed away from now
       const { ctx } = chart;
       ctx.save();
       ctx.strokeStyle = '#888';
@@ -264,20 +273,65 @@
       .join('\n');
   }
 
+  // Zooming: every chart shows the same span of time. Pinching or Ctrl-scrolling a
+  // chart zooms it and dragging moves along, both on the time axis only; when the
+  // gesture ends, the other charts follow. The day buttons set the span directly.
+  // Charts only take vertical drags for page scrolling, so a sideways drag moves
+  // the chart and a pinch zooms the chart rather than the page.
+  Hammer.defaults.touchAction = 'pan-y';
+  const HOUR_MS = 3600 * 1000;
+  const RANGE = { min: Date.parse(comparison.range.start), max: Date.parse(comparison.range.end) };
+  const MIN_SPAN_MS = 2 * HOUR_MS;
+  const charts = [];
+  let view = { ...RANGE };
+  const zoomButtons = []; // the "Show" row's day buttons, with their spans
+  let stepBack;
+  let stepForward;
+
+  // Ticks by the day over spans of more than two days, else by the hour, with
+  // midnights labeled by date either way.
+  const unitFor = ({ min, max }) => (max - min > 48 * HOUR_MS ? 'day' : 'hour');
+
+  function showSpan(min, max) {
+    const span = Math.min(Math.max(max - min, MIN_SPAN_MS), RANGE.max - RANGE.min);
+    const start = Math.min(Math.max(min, RANGE.min), RANGE.max - span);
+    view = { min: start, max: start + span };
+    for (const chart of charts) {
+      chart.options.scales.x.time.unit = unitFor(view);
+      chart.zoomScale('x', view, 'none');
+    }
+    updateZoomBar();
+  }
+
+  const followGesture = ({ chart }) => showSpan(chart.scales.x.min, chart.scales.x.max);
+
   function chartOptions(yTitle, yExtra = {}) {
     return {
       interaction: { mode: 'sameTime', intersect: false },
-      plugins: { tooltip: { callbacks: { footer: sunFooter } } },
+      plugins: {
+        tooltip: { callbacks: { footer: sunFooter } },
+        zoom: {
+          limits: { x: { min: 'original', max: 'original', minRange: MIN_SPAN_MS } },
+          zoom: {
+            mode: 'x',
+            pinch: { enabled: true },
+            wheel: { enabled: true, modifierKey: 'ctrl' },
+            onZoomComplete: followGesture,
+          },
+          pan: { enabled: true, mode: 'x', onPanComplete: followGesture },
+        },
+      },
       scales: {
         x: {
           type: 'time',
           min: comparison.range.start,
           max: comparison.range.end,
           time: {
-            unit: days > 1 ? 'day' : 'hour',
+            unit: unitFor(RANGE),
             displayFormats: { hour: 'ha', day: 'EEE M/d' },
             tooltipFormat: 'EEE h a',
           },
+          ticks: { major: { enabled: true }, font: (c) => (c.tick?.major ? { weight: 'bold' } : {}) },
         },
         y: { title: { display: true, text: yTitle }, ...yExtra },
       },
@@ -285,7 +339,7 @@
   }
 
   if (comparison.lines.length) {
-    new Chart(document.getElementById('temp-chart'), {
+    charts.push(new Chart(document.getElementById('temp-chart'), {
       type: 'line',
       data: {
         datasets: [
@@ -296,7 +350,7 @@
       },
       options: chartOptions('°F'),
       plugins: [overlays],
-    });
+    }));
 
     // Darker and solid for the shortest lead, lighter and dotted for the longest.
     const LEAD_STYLES = {
@@ -330,6 +384,7 @@
       options: chartOptions('°F'),
       plugins: [overlays],
     });
+    charts.push(leadChart);
 
     for (const button of document.querySelectorAll('#lead-sources button')) {
       button.addEventListener('click', () => {
@@ -388,7 +443,7 @@
     };
 
     const TEMP_COLOR = 'rgba(32, 32, 32, 0.35)';
-    new Chart(document.getElementById('spread-chart'), {
+    charts.push(new Chart(document.getElementById('spread-chart'), {
       type: 'line',
       data: {
         datasets: [
@@ -408,9 +463,9 @@
       },
       options: spreadOptions,
       plugins: [overlays, fogBand],
-    });
+    }));
 
-    new Chart(document.getElementById('cloud-chart'), {
+    charts.push(new Chart(document.getElementById('cloud-chart'), {
       type: 'line',
       data: {
         datasets: [
@@ -425,7 +480,87 @@
       },
       options: chartOptions('%', { min: 0, max: 100 }),
       plugins: [overlays],
-    });
+    }));
+
+    buildZoomBar();
+  }
+
+  // The "Show" row: the whole range, each local calendar day in it (skipping
+  // slivers of a few hours at the ends), and arrows that step to the next day when
+  // a day is shown, else by the current span.
+  function dayLabel(dayStart) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const offset = Math.round((dayStart - today.getTime()) / (24 * HOUR_MS));
+    const names = { '-1': 'Yesterday', 0: 'Today', 1: 'Tomorrow' };
+    return names[offset] ?? new Date(dayStart).toLocaleDateString([], { weekday: 'short' });
+  }
+
+  function zoomButton(label, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  function buildZoomBar() {
+    const bar = document.getElementById('zoom-bar');
+    const heading = document.createElement('span');
+    heading.textContent = 'Show:';
+    bar.append(heading);
+
+    const spans = [{ label: 'All', ...RANGE }];
+    const day = new Date(RANGE.min);
+    day.setHours(0, 0, 0, 0);
+    while (day.getTime() < RANGE.max) {
+      const dayStart = day.getTime();
+      day.setDate(day.getDate() + 1);
+      const min = Math.max(dayStart, RANGE.min);
+      const max = Math.min(day.getTime(), RANGE.max);
+      if (max - min >= 4 * HOUR_MS) spans.push({ label: dayLabel(dayStart), min, max });
+    }
+
+    stepBack = zoomButton('←', () => step(-1));
+    stepBack.setAttribute('aria-label', 'Earlier');
+    bar.append(stepBack);
+    for (const span of spans) {
+      const button = zoomButton(span.label, () => showSpan(span.min, span.max));
+      zoomButtons.push({ button, span });
+      bar.append(button);
+    }
+    stepForward = zoomButton('→', () => step(1));
+    stepForward.setAttribute('aria-label', 'Later');
+    bar.append(stepForward);
+    updateZoomBar();
+  }
+
+  function isShown(span) {
+    return Math.abs(span.min - view.min) < 60000 && Math.abs(span.max - view.max) < 60000;
+  }
+
+  function step(direction) {
+    // zoomButtons[0] is "All"; the rest are the days.
+    const dayIndex = zoomButtons.findIndex(({ span }, i) => i > 0 && isShown(span));
+    const next = dayIndex > 0 && dayIndex + direction > 0 ? zoomButtons[dayIndex + direction] : undefined;
+    if (next) {
+      showSpan(next.span.min, next.span.max);
+    } else {
+      const width = view.max - view.min;
+      showSpan(view.min + direction * width, view.max + direction * width);
+    }
+  }
+
+  function updateZoomBar() {
+    for (const { button, span } of zoomButtons) {
+      const active = isShown(span);
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    if (stepBack) {
+      stepBack.disabled = view.min <= RANGE.min;
+      stepForward.disabled = view.max >= RANGE.max;
+    }
   }
 </script>
 {% endblock %}

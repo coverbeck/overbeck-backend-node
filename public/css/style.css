@@ -213,3 +213,17 @@ main {
   border-color: #202020;
   color: #fff;
 }
+
+/* Stays in reach while scrolling through the charts below it. */
+.zoom-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.35rem 0;
+  background: #fff;
+}
+
+.chart-options button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
