@@ -10,8 +10,8 @@ import {
   ESTIMATE_WINDOW_DAYS,
   estimateFromRun,
   fitCorrections,
-  loadHourBias,
-  loadHrrrRuns,
+  fitHourBias,
+  loadBaseRuns,
   loadStationTemps,
 } from '../estimate.ts';
 import type { Correction } from '../estimate.ts';
@@ -61,21 +61,21 @@ const saveEstimate = db.transaction((madeAt: string, hours: { validAt: number; t
 function run(): string {
   const now = new Date();
   const since = new Date(now.getTime() - ESTIMATE_WINDOW_DAYS * 24 * HOUR_MS);
-  const runs = loadHrrrRuns(since);
+  const runs = loadBaseRuns(since);
   const latest = runs.at(-1);
   if (!latest || latest.fetchedAt < startOfHour(now).getTime()) {
-    throw new Error('no HRRR forecast fetched this hour');
+    throw new Error('no forecast fetched this hour');
   }
   const station = loadStationTemps(since);
-  const hourBias = loadHourBias(now.getTime());
-  const corrections = fitCorrections(runs, station, hourBias, now.getTime());
-  const hours = estimateFromRun(latest, station, hourBias, corrections);
+  const corrections = fitCorrections(runs, station, now.getTime());
+  const hourBias = fitHourBias(runs, station, corrections, now.getTime());
+  const hours = estimateFromRun(latest, station, corrections, hourBias);
   if (!hours) {
     throw new Error('no station reading at the top of the hour');
   }
   saveEstimate(toSqliteUtc(now), hours);
   const hourRange = `hour-of-day bias ${signed(Math.min(...hourBias))} to ${signed(Math.max(...hourBias))}`;
-  return `saved ${hours.length}h; ${hourRange}; ${corrections.map(describe).join('; ')}`;
+  return `saved ${hours.length}h from ${latest.sources.join('+')}; ${corrections.map(describe).join('; ')}; ${hourRange}`;
 }
 
 try {

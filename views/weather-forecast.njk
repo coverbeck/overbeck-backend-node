@@ -38,7 +38,7 @@
   "{{ leadLabel(lead) }}" uses the newest forecast made at least {{ lead }} hours before each hour,
   the forecast you'd have had that far in advance.
   {% endif %}
-  The average never includes our estimate, which is built from HRRR. Click a legend
+  The average never includes our estimate, which is built from NWS, NBM and HRRR. Click a legend
   entry to show or hide a line. The temperature chart starts with just my station and
   our estimate; the other charts start with the station and the average.
 </p>
@@ -132,14 +132,14 @@
   <li><strong>NBM</strong>: NOAA's National Blend of Models, a blend of many models (2.5 km).</li>
   <li><strong>ECMWF</strong>: the European Centre's global model (about 25 km).</li>
   <li>
-    <strong>Our estimate</strong>: HRRR's latest temperature forecast, corrected for
-    how HRRR's error varies by hour of the day at this time of year (from two-plus
-    years of its day-ahead forecasts against my station; for example, it runs cooler
-    than usual on fall afternoons), and for how it has done over the last two weeks:
-    its typical bias at each lead time, and how much of its current error tends to
-    carry into the hours ahead. The two-week corrections start small and get more
-    weight as data builds up. Made every hour and saved as made, so it's scored like
-    the others.
+    <strong>Our estimate</strong>: the average of the latest NWS, NBM and HRRR
+    temperature forecasts, corrected for how that average has done over the last two
+    weeks: its typical bias at each lead time, how much of its current error tends to
+    carry into the hours ahead, and, for daytime hours, how its error varies by hour
+    of the day (it has run warm in the mornings and cool in the afternoons). ECMWF is
+    left out, since it has missed by the most here. The corrections start small and
+    get more weight as data builds up. Made every hour and saved as made, so it's
+    scored like the others. Until Oct 20, 2026, it was built from HRRR alone.
   </li>
 </ul>
 <p class="hint">
