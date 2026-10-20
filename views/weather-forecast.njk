@@ -132,14 +132,27 @@
   <li><strong>NBM</strong>: NOAA's National Blend of Models, a blend of many models (2.5 km).</li>
   <li><strong>ECMWF</strong>: the European Centre's global model (about 25 km).</li>
   <li>
-    <strong>Our estimate</strong>: the average of the latest NWS, NBM and HRRR
-    temperature forecasts, corrected for how that average has done over the last two
-    weeks: its typical bias at each lead time, how much of its current error tends to
-    carry into the hours ahead, and, for daytime hours, how its error varies by hour
-    of the day (it has run warm in the mornings and cool in the afternoons). ECMWF is
-    left out, since it has missed by the most here. The corrections start small and
-    get more weight as data builds up. Made every hour and saved as made, so it's
-    scored like the others. Until Oct 20, 2026, it was built from HRRR alone.
+    <strong>Our estimate</strong>: made every hour from the latest forecasts and
+    the station's recent readings, and saved as made, so it's scored like the others.
+    Past hours show the estimate as it was at the time, not recomputed with the
+    current method.
+    <ul>
+      <li>
+        <strong>Since 4 pm on Oct 20, 2026</strong>: the average of the latest NWS, NBM
+        and HRRR temperature forecasts, corrected for how that average has done over
+        the last two weeks: its typical bias at each lead time, how much of its
+        current error tends to carry into the hours ahead, and, for daytime hours, how
+        its error varies by hour of the day (it has run warm in the mornings and cool
+        in the afternoons). ECMWF is left out, since it has missed by the most here.
+        The corrections start small and get more weight as data builds up.
+      </li>
+      <li>
+        <strong>Oct 12 to 4 pm on Oct 20, 2026</strong>: HRRR alone, with the same
+        kinds of corrections fitted to HRRR, plus an hour-of-day correction taken from
+        archived HRRR day-ahead forecasts for this time of year since 2024.
+        Scores for ranges that include these days mix the two methods.
+      </li>
+    </ul>
   </li>
 </ul>
 <p class="hint">
