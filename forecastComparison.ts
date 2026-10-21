@@ -21,6 +21,9 @@ export const FOG_SPREAD_F = 2;
 // An hour with at least this much rain (the gauge's resolution) counts as rainy,
 // for the station and for a forecast alike.
 const WET_IN = 0.01;
+// The rain chart shows when rain was recorded, some forecast has rain, or some
+// forecast gives at least this chance of it.
+const SHOW_CHANCE_PCT = 20;
 
 export const RANGE_DAYS = [1, 3, 7] as const;
 export const LEAD_HOURS = [0, 6, 12, 24] as const;
@@ -88,7 +91,7 @@ export interface RainScoreRow {
 }
 
 export interface RainSummary {
-  any: boolean; // rain recorded, or forecast by any line, anywhere in the range
+  show: boolean; // rain recorded or forecast in the range (see SHOW_CHANCE_PCT)
   maxChancePct: number | null;
 }
 
@@ -502,10 +505,9 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
   );
   const rainPoints = [...stationRain].map(([hourEnd, y]) => ({ x: midHourIso(hourEnd), y }));
   const chances = lines.flatMap((line) => line.rainChance.map((p) => p.y)).filter((y) => y !== null);
-  const rain: RainSummary = {
-    any: [...rainPoints, ...lines.flatMap((line) => line.rain)].some((p) => p.y !== null && p.y >= WET_IN),
-    maxChancePct: chances.length ? Math.max(...chances) : null,
-  };
+  const maxChancePct = chances.length ? Math.max(...chances) : null;
+  const anyAmount = [...rainPoints, ...lines.flatMap((line) => line.rain)].some((p) => p.y !== null && p.y >= WET_IN);
+  const rain: RainSummary = { show: anyAmount || (maxChancePct ?? 0) >= SHOW_CHANCE_PCT, maxChancePct };
 
   const { lastFetchedAt } = db.prepare(
     "SELECT MAX(fetched_at) AS lastFetchedAt FROM forecast_snapshots WHERE kind = 'live'"
@@ -529,7 +531,7 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
     lines,
     scores,
     rain,
-    rainScores: rain.any ? rainScoreRows(lines, stationRain) : [],
+    rainScores: rain.show ? rainScoreRows(lines, stationRain) : [],
     fogSpreadF: FOG_SPREAD_F,
     leadComparison,
   };
