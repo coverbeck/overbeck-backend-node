@@ -29,10 +29,10 @@ const insertSnapshot = db.prepare(
 const insertHour = db.prepare(`
   INSERT INTO forecast_hours (
     snapshot_id, valid_at, temp_f, dewpoint_f, humidity_pct, sky_cover_pct, low_cloud_pct,
-    wind_mph, wind_dir_deg, precip_prob_pct, solar_wm2
+    wind_mph, wind_dir_deg, precip_prob_pct, solar_wm2, precip_in
   ) VALUES (
     @snapshotId, @validAt, @tempF, @dewpointF, @humidityPct, @skyCoverPct, @lowCloudPct,
-    @windMph, @windDirDeg, @precipProbPct, @solarWm2
+    @windMph, @windDirDeg, @precipProbPct, @solarWm2, @precipIn
   )
 `);
 const upsertJobCheckin = db.prepare(`

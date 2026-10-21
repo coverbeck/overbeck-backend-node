@@ -5,8 +5,13 @@
 // so it can run from cron (see cron/backyard-weather.crontab). Only past hours are
 // stored: a future hour's day-ahead value still changes as new runs come out.
 //
-//   node --env-file=.env scripts/collect-forecast-archive.ts
+// With --fill-precip, it first re-requests the whole archive (about 33 requests)
+// to add rain amounts to the hours stored before they were collected (2026-10-20),
+// then continues as usual.
+//
+//   node --env-file=.env scripts/collect-forecast-archive.ts [--fill-precip]
 
+import { parseArgs } from 'node:util';
 import db from '../db/index.ts';
 import { ARCHIVE_START_DATE, getOpenMeteoArchive } from '../openmeteo.ts';
 import { fromSqliteUtc, startOfHour, toSqliteUtc } from '../forecast.ts';
@@ -37,10 +42,16 @@ const insertSnapshot = db.prepare(`
 const insertHour = db.prepare(`
   INSERT INTO forecast_hours (
     snapshot_id, valid_at, temp_f, dewpoint_f, humidity_pct, sky_cover_pct, low_cloud_pct,
-    wind_mph, wind_dir_deg, precip_prob_pct, solar_wm2
+    wind_mph, wind_dir_deg, precip_prob_pct, solar_wm2, precip_in
   ) VALUES (
     @snapshotId, @validAt, @tempF, @dewpointF, @humidityPct, @skyCoverPct, @lowCloudPct,
-    @windMph, @windDirDeg, @precipProbPct, @solarWm2
+    @windMph, @windDirDeg, @precipProbPct, @solarWm2, @precipIn
+  )
+`);
+const updatePrecip = db.prepare(`
+  UPDATE forecast_hours SET precip_in = @precipIn
+  WHERE precip_in IS NULL AND valid_at = @validAt AND snapshot_id = (
+    SELECT id FROM forecast_snapshots WHERE source = @source AND fetched_at = @madeAt AND kind = 'archive_day1'
   )
 `);
 const upsertJobCheckin = db.prepare(`
@@ -52,13 +63,17 @@ const upsertJobCheckin = db.prepare(`
     message = excluded.message
 `);
 
-// One snapshot per source and hour, stamped as made 24 hours before the hour.
+// Archived hours are stamped as made 24 hours before the hour.
+function madeAtFor(validAt: string): string {
+  return toSqliteUtc(new Date(fromSqliteUtc(validAt).getTime() - DAY_MS));
+}
+
+// One snapshot per source and hour.
 const saveForecasts = db.transaction((forecasts: Forecast[]) => {
   let inserted = 0;
   for (const forecast of forecasts) {
     for (const hour of forecast.hours) {
-      const madeAt = toSqliteUtc(new Date(fromSqliteUtc(hour.validAt).getTime() - DAY_MS));
-      const { changes, lastInsertRowid } = insertSnapshot.run(forecast.source, madeAt);
+      const { changes, lastInsertRowid } = insertSnapshot.run(forecast.source, madeAtFor(hour.validAt));
       if (changes) {
         insertHour.run({ snapshotId: lastInsertRowid, ...hour });
         inserted++;
@@ -68,7 +83,47 @@ const saveForecasts = db.transaction((forecasts: Forecast[]) => {
   return inserted;
 });
 
-async function run(): Promise<string> {
+const fillPrecip = db.transaction((forecasts: Forecast[]) => {
+  let updated = 0;
+  for (const forecast of forecasts) {
+    for (const hour of forecast.hours) {
+      if (hour.precipIn !== null) {
+        updated += updatePrecip.run({
+          precipIn: hour.precipIn,
+          validAt: hour.validAt,
+          source: forecast.source,
+          madeAt: madeAtFor(hour.validAt),
+        }).changes;
+      }
+    }
+  }
+  return updated;
+});
+
+function pause(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+}
+
+// Adds rain amounts to stored hours that lack them, through endMs.
+async function fillPrecipThrough(endMs: number): Promise<string> {
+  let requests = 0;
+  let updated = 0;
+  const startMs = fromSqliteUtc(`${ARCHIVE_START_DATE} 00:00:00`).getTime();
+  for (let chunkStart = startMs; chunkStart < endMs; chunkStart += CHUNK_DAYS * DAY_MS) {
+    if (requests) {
+      await pause();
+    }
+    const chunkEnd = Math.min(chunkStart + CHUNK_DAYS * DAY_MS, endMs);
+    updated += fillPrecip(await getOpenMeteoArchive(new Date(chunkStart), new Date(chunkEnd)));
+    requests++;
+    if (requests % 6 === 0) {
+      log(`fill-precip: ${requests} requests, ${updated} hours, through ${toSqliteUtc(new Date(chunkEnd))}`);
+    }
+  }
+  return `added rain to ${updated} archived hours in ${requests} requests; `;
+}
+
+async function run(withPrecipFill: boolean): Promise<string> {
   const { latest } = db.prepare(`
     SELECT MAX(h.valid_at) AS latest
     FROM forecast_hours h
@@ -81,12 +136,13 @@ async function run(): Promise<string> {
     ? startOfUtcDay(fromSqliteUtc(latest).getTime())
     : fromSqliteUtc(`${ARCHIVE_START_DATE} 00:00:00`).getTime();
   const endMs = startOfHour(new Date()).getTime();
+  const fillSummary = withPrecipFill && latest ? await fillPrecipThrough(endMs) : '';
 
   let requests = 0;
   let inserted = 0;
   for (let chunkStart = startMs; chunkStart < endMs; chunkStart += CHUNK_DAYS * DAY_MS) {
-    if (requests) {
-      await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
+    if (requests || fillSummary) {
+      await pause();
     }
     const chunkEnd = Math.min(chunkStart + CHUNK_DAYS * DAY_MS, endMs);
     inserted += saveForecasts(await getOpenMeteoArchive(new Date(chunkStart), new Date(chunkEnd)));
@@ -99,11 +155,12 @@ async function run(): Promise<string> {
     JOIN forecast_snapshots s ON s.id = h.snapshot_id
     WHERE s.kind = 'archive_day1'
   `).get() as { newest: string | null };
-  return `inserted ${inserted} archived forecast hours in ${requests} requests; newest ${newest ?? 'none'}`;
+  return `${fillSummary}inserted ${inserted} archived forecast hours in ${requests} requests; newest ${newest ?? 'none'}`;
 }
 
 try {
-  const summary = await run();
+  const { values } = parseArgs({ options: { 'fill-precip': { type: 'boolean' } } });
+  const summary = await run(values['fill-precip'] ?? false);
   upsertJobCheckin.run(JOB_NAME, 'ok', summary);
   log(summary);
 } catch (err) {

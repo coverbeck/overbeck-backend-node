@@ -21,6 +21,8 @@ const VARIABLES = [
   'wind_speed_10m',
   'wind_direction_10m',
   'precipitation_probability',
+  // Rain in the preceding hour, like shortwave_radiation below.
+  'precipitation',
   // Average over the preceding hour (Open-Meteo's convention), unlike the station's
   // instantaneous solarradiation reading.
   'shortwave_radiation',
@@ -45,6 +47,7 @@ const COMMON_PARAMS = {
   models: Object.keys(MODELS).join(','),
   temperature_unit: 'fahrenheit',
   wind_speed_unit: 'mph',
+  precipitation_unit: 'inch',
   timeformat: 'unixtime',
   timezone: 'GMT',
 };
@@ -94,6 +97,7 @@ function toForecasts(
         windDirDeg: series('wind_direction_10m')[i] ?? null,
         precipProbPct: series('precipitation_probability')[i] ?? null,
         solarWm2: series('shortwave_radiation')[i] ?? null,
+        precipIn: series('precipitation')[i] ?? null,
       });
     });
     forecasts.push({ source, issuedAt: null, hours });

@@ -72,7 +72,8 @@ interface AmbientHistoryRow {
   solarradiation?: number;
   uv?: number;
   baromrelin?: number;
-  hourlyrainin?: number;
+  hourlyrainin?: number; // a rate, in/h
+  dailyrainin?: number;
 }
 
 // One 5-minute reading, in the units stored in station_readings.
@@ -87,7 +88,8 @@ export interface StationReading {
   solarWm2: number | null;
   uv: number | null;
   pressureIn: number | null;
-  rainHourlyIn: number | null;
+  rainHourlyIn: number | null; // rain rate, in/h
+  rainDailyIn: number | null; // running total since local midnight
 }
 
 const AMBIENT_MIN_INTERVAL_MS = 1100;
@@ -143,6 +145,7 @@ export async function getStationHistory(mac: string, endDate: Date, limit = 288)
       uv: row.uv ?? null,
       pressureIn: row.baromrelin ?? null,
       rainHourlyIn: row.hourlyrainin ?? null,
+      rainDailyIn: row.dailyrainin ?? null,
     }))
     .sort((a, b) => a.observedAt.localeCompare(b.observedAt));
 }

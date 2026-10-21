@@ -122,6 +122,15 @@ db.exec(`
   )
 `);
 
+// For columns added after a table was first created: SQLite can add a plain
+// nullable column in place.
+function addColumnIfMissing(table: string, column: string, type: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
 // Backyard Weather. All times are UTC in SQLite's 'YYYY-MM-DD HH:MM:SS' format,
 // matching datetime('now'), so they compare correctly as text.
 
@@ -189,7 +198,9 @@ if (!forecastSnapshotsSql.includes("'estimate'")) {
 
 // The next 18 hours of each snapshot, converted to °F / mph to match
 // station_readings. low_cloud_pct is null for NWS (not forecast) and NBM
-// (Open-Meteo returns none); solar_wm2 is null for NWS (not forecast).
+// (Open-Meteo returns none); solar_wm2 is null for NWS (not forecast). precip_in is
+// the rain forecast for the hour ending at valid_at (Open-Meteo's convention),
+// null for hours saved before it was collected (2026-10-20).
 db.exec(`
   CREATE TABLE IF NOT EXISTS forecast_hours (
     snapshot_id INTEGER NOT NULL REFERENCES forecast_snapshots(id),
@@ -203,13 +214,17 @@ db.exec(`
     wind_dir_deg REAL,
     precip_prob_pct REAL,
     solar_wm2 REAL,
+    precip_in REAL,
     PRIMARY KEY (snapshot_id, valid_at)
   )
 `);
 db.exec('CREATE INDEX IF NOT EXISTS idx_forecast_hours_valid_at ON forecast_hours(valid_at)');
+addColumnIfMissing('forecast_hours', 'precip_in', 'REAL');
 
 // Ambient station history at full 5-minute resolution. Columns are nullable
-// since individual sensors can drop out.
+// since individual sensors can drop out. rain_hourly_in is Ambient's hourlyrainin,
+// a rain rate in inches per hour despite the name; rain_daily_in is the day's
+// running total, which resets at local midnight, saved from 2026-10-20.
 db.exec(`
   CREATE TABLE IF NOT EXISTS station_readings (
     observed_at TEXT PRIMARY KEY,
@@ -223,9 +238,11 @@ db.exec(`
     uv REAL,
     pressure_in REAL,
     rain_hourly_in REAL,
-    created_timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+    created_timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    rain_daily_in REAL
   )
 `);
+addColumnIfMissing('station_readings', 'rain_daily_in', 'REAL');
 
 // Each GET /api/weather/tonight answer with its inputs, to evaluate the
 // prediction against the raw forecast and the actual low.

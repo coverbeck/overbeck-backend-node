@@ -22,6 +22,7 @@ interface GridpointsResponse {
     windSpeed: GridLayer;
     windDirection: GridLayer;
     probabilityOfPrecipitation: GridLayer;
+    quantitativePrecipitation: GridLayer;
   };
 }
 
@@ -44,6 +45,8 @@ function converter(uom: string | undefined): (value: number) => number {
       return (kmh) => kmh / 1.609344;
     case 'wmoUnit:m_s-1':
       return (ms) => ms * 2.236936;
+    case 'wmoUnit:mm':
+      return (mm) => mm / 25.4;
     case 'wmoUnit:percent':
     case 'wmoUnit:degree_(angle)':
       return (v) => v;
@@ -52,15 +55,18 @@ function converter(uom: string | undefined): (value: number) => number {
   }
 }
 
-// Hour start (ms) -> value, converted to °F / mph / percent / degrees.
-function expandLayer(layer: GridLayer): Map<number, number | null> {
+// Hour start (ms) -> value, converted to °F / mph / percent / degrees / inches.
+// With `total`, the value is an amount for the whole interval (rain), so it's
+// divided evenly among its hours rather than repeated.
+function expandLayer(layer: GridLayer, total = false): Map<number, number | null> {
   const convert = converter(layer.uom);
   const hourly = new Map<number, number | null>();
   for (const { validTime, value } of layer.values) {
     const [start, duration] = validTime.split('/');
     const startMs = Date.parse(start);
-    for (let i = 0; i < durationHours(duration); i++) {
-      hourly.set(startMs + i * HOUR_MS, value === null ? null : convert(value));
+    const hours = durationHours(duration);
+    for (let i = 0; i < hours; i++) {
+      hourly.set(startMs + i * HOUR_MS, value === null ? null : convert(value) / (total ? hours : 1));
     }
   }
   return hourly;
@@ -88,6 +94,8 @@ export async function getNwsForecast(now: Date, hoursAhead: number): Promise<For
   const windSpeed = expandLayer(p.windSpeed);
   const windDir = expandLayer(p.windDirection);
   const precipProb = expandLayer(p.probabilityOfPrecipitation);
+  // NWS gives rain amounts in blocks of about 6 hours, spread evenly here.
+  const precip = expandLayer(p.quantitativePrecipitation, true);
 
   const hours: ForecastHour[] = [];
   const { start, end } = forecastWindow(now, hoursAhead);
@@ -106,6 +114,7 @@ export async function getNwsForecast(now: Date, hoursAhead: number): Promise<For
       windDirDeg: windDir.get(t) ?? null,
       precipProbPct: precipProb.get(t) ?? null,
       solarWm2: null, // not in the NWS grid data
+      precipIn: precip.get(t - HOUR_MS) ?? null, // the hour ending at t, like Open-Meteo
     });
   }
 

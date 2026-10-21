@@ -34,10 +34,10 @@ function errorMessage(err: unknown): string {
 const insertReading = db.prepare(`
   INSERT OR IGNORE INTO station_readings (
     observed_at, temp_f, dewpoint_f, humidity_pct, wind_mph, gust_mph, wind_dir_deg,
-    solar_wm2, uv, pressure_in, rain_hourly_in
+    solar_wm2, uv, pressure_in, rain_hourly_in, rain_daily_in
   ) VALUES (
     @observedAt, @tempF, @dewpointF, @humidityPct, @windMph, @gustMph, @windDirDeg,
-    @solarWm2, @uv, @pressureIn, @rainHourlyIn
+    @solarWm2, @uv, @pressureIn, @rainHourlyIn, @rainDailyIn
   )
 `);
 const upsertJobCheckin = db.prepare(`

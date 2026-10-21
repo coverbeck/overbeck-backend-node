@@ -18,6 +18,10 @@ const MATCH_MS = 5 * 60 * 1000; // a station reading within 5 minutes counts as 
 // Temperature within this many °F of the dew point: dew or fog likely.
 export const FOG_SPREAD_F = 2;
 
+// An hour with at least this much rain (the gauge's resolution) counts as rainy,
+// for the station and for a forecast alike.
+const WET_IN = 0.01;
+
 export const RANGE_DAYS = [1, 3, 7] as const;
 export const LEAD_HOURS = [0, 6, 12, 24] as const;
 const ARCHIVE_LEAD_HOURS = 24;
@@ -49,6 +53,10 @@ export interface ForecastLine {
   spread: ChartPoint[]; // temperature minus dew point
   skyCover: ChartPoint[];
   lowCloud: ChartPoint[]; // empty when the source has no low-cloud forecast
+  // Rain amount (inches) and chance (%) for each hour, plotted at the middle of the
+  // hour they cover. HRRR's chance is left out: Open-Meteo copies it from NBM.
+  rain: ChartPoint[];
+  rainChance: ChartPoint[];
 }
 
 export interface ScoreRow {
@@ -61,6 +69,27 @@ export interface ScoreRow {
   tempMiss: string;
   dewpointBias: string;
   dewpointMiss: string;
+}
+
+// How each forecast's rain did over the past hours in the range: totals, rainy
+// hours it caught, missed and wrongly forecast, and its average chance of rain in
+// the hours that turned out rainy and dry ("–" without a chance forecast).
+export interface RainScoreRow {
+  key: LineKey;
+  label: string;
+  hours: number;
+  forecastTotal: string; // e.g. "0.42 in"
+  recordedTotal: string;
+  caught: number;
+  missed: number;
+  falseAlarms: number;
+  chanceWhenRainy: string; // e.g. "64%"
+  chanceWhenDry: string;
+}
+
+export interface RainSummary {
+  any: boolean; // rain recorded, or forecast by any line, anywhere in the range
+  maxChancePct: number | null;
 }
 
 export interface TimeRange {
@@ -94,9 +123,17 @@ export interface ForecastComparison {
   range: TimeRange; // the charts' x axis
   sun: SunBands;
   lastFetchedAt: string | null; // ISO
-  station: { temp: ChartPoint[]; dewpoint: ChartPoint[]; spread: ChartPoint[]; humidity: ChartPoint[] };
+  station: {
+    temp: ChartPoint[];
+    dewpoint: ChartPoint[];
+    spread: ChartPoint[];
+    humidity: ChartPoint[];
+    rain: ChartPoint[]; // inches in each past hour, at the middle of the hour
+  };
   lines: ForecastLine[]; // the average first, then our estimate, then each source
   scores: ScoreRow[]; // best temperature first
+  rain: RainSummary;
+  rainScores: RainScoreRow[]; // fewest missed and false-alarm hours first
   fogSpreadF: number;
   leadComparison: LeadComparison[]; // the average, then SOURCE_ORDER
 }
@@ -108,6 +145,8 @@ interface ForecastRow {
   dewpoint_f: number | null;
   sky_cover_pct: number | null;
   low_cloud_pct: number | null;
+  precip_in: number | null;
+  precip_prob_pct: number | null;
 }
 
 export interface StationRow {
@@ -117,8 +156,19 @@ export interface StationRow {
   humidity_pct: number | null;
 }
 
+interface RainRow {
+  observed_at: string;
+  rain_hourly_in: number | null; // a rate, in/h
+  rain_daily_in: number | null;
+}
+
 function toIso(sqliteUtc: string): string {
   return fromSqliteUtc(sqliteUtc).toISOString();
+}
+
+// Rain values are for the hour ending at valid_at; they're plotted at its middle.
+function midHourIso(hourEndMs: number): string {
+  return new Date(hourEndMs - HOUR_MS / 2).toISOString();
 }
 
 function mean(values: number[]): number | null {
@@ -140,6 +190,10 @@ function spread(temp: number | null, dewpoint: number | null): number | null {
 function sourceLine(source: ForecastSource, rows: ForecastRow[]): ForecastLine {
   const series = (value: (row: ForecastRow) => number | null): ChartPoint[] =>
     source === 'estimate' ? [] : rows.map((row) => ({ x: toIso(row.valid_at), y: value(row) }));
+  const rainSeries = (value: (row: ForecastRow) => number | null): ChartPoint[] =>
+    source === 'estimate'
+      ? []
+      : rows.map((row) => ({ x: midHourIso(fromSqliteUtc(row.valid_at).getTime()), y: value(row) }));
   const temp = rows.map((row) => ({ x: toIso(row.valid_at), y: row.temp_f }));
   const hasLowCloud = rows.some((row) => row.low_cloud_pct !== null);
   return {
@@ -150,6 +204,8 @@ function sourceLine(source: ForecastSource, rows: ForecastRow[]): ForecastLine {
     spread: series((row) => spread(row.temp_f, row.dewpoint_f)),
     skyCover: series((row) => row.sky_cover_pct),
     lowCloud: hasLowCloud ? series((row) => row.low_cloud_pct) : [],
+    rain: rainSeries((row) => row.precip_in),
+    rainChance: source === 'om_hrrr' ? [] : rainSeries((row) => row.precip_prob_pct),
   };
 }
 
@@ -179,6 +235,8 @@ function averageLine(lines: ForecastLine[]): ForecastLine {
     spread: average((line) => line.spread),
     skyCover: average((line) => line.skyCover),
     lowCloud: [],
+    rain: average((line) => line.rain),
+    rainChance: average((line) => line.rainChance),
   };
 }
 
@@ -246,6 +304,104 @@ function scoreRows(lines: ForecastLine[], stationRows: StationRow[], nowMs: numb
     }));
 }
 
+// Rain in each complete hour through nowMs, keyed by the hour's end. From the
+// day's running total where the station reported it for the hour and the reading
+// before it (the total resets at local midnight), else from the average rain rate
+// over the hour's readings, the only option for readings before 2026-10-20.
+function hourlyStationRain(rows: RainRow[], nowMs: number): Map<number, number> {
+  const byHour = new Map<number, RainRow[]>();
+  for (const row of rows) {
+    const hourEnd = Math.ceil(fromSqliteUtc(row.observed_at).getTime() / HOUR_MS) * HOUR_MS;
+    byHour.set(hourEnd, [...(byHour.get(hourEnd) ?? []), row]);
+  }
+
+  const rain = new Map<number, number>();
+  let previous: RainRow | undefined;
+  for (const [hourEnd, readings] of [...byHour].sort(([a], [b]) => a - b)) {
+    const totals = [previous, ...readings].map((row) => row?.rain_daily_in ?? null);
+    const recent = previous && fromSqliteUtc(previous.observed_at).getTime() >= hourEnd - HOUR_MS - 15 * 60 * 1000;
+    if (hourEnd <= nowMs) {
+      if (recent && totals.every((t) => t !== null)) {
+        let amount = 0;
+        for (let i = 1; i < totals.length; i++) {
+          const [before, after] = [totals[i - 1] as number, totals[i] as number];
+          amount += after >= before ? after - before : after;
+        }
+        rain.set(hourEnd, amount);
+      } else {
+        const rates = readings.map((row) => row.rain_hourly_in).filter((r) => r !== null);
+        // At least half the hour's 12 readings, so a gap doesn't pass for a dry hour.
+        if (rates.length >= 6) {
+          rain.set(hourEnd, mean(rates) ?? 0);
+        }
+      }
+    }
+    previous = readings[readings.length - 1];
+  }
+  return rain;
+}
+
+function formatInches(value: number): string {
+  return `${value.toFixed(2)} in`;
+}
+
+function formatPercent(values: number[]): string {
+  const average = mean(values);
+  return average === null ? '–' : `${Math.round(average)}%`;
+}
+
+function rainScoreRows(lines: ForecastLine[], actuals: Map<number, number>): RainScoreRow[] {
+  const rows: (RainScoreRow & { wrong: number; totalGap: number })[] = [];
+  for (const line of lines) {
+    const chances = new Map(line.rainChance.map((p) => [Date.parse(p.x), p.y]));
+    let hours = 0;
+    let forecastTotal = 0;
+    let recordedTotal = 0;
+    let caught = 0;
+    let missed = 0;
+    let falseAlarms = 0;
+    const chanceWhenRainy: number[] = [];
+    const chanceWhenDry: number[] = [];
+    for (const point of line.rain) {
+      const ms = Date.parse(point.x);
+      const actual = actuals.get(ms + HOUR_MS / 2);
+      if (point.y === null || actual === undefined) {
+        continue;
+      }
+      hours++;
+      forecastTotal += point.y;
+      recordedTotal += actual;
+      const [rainy, forecastRainy] = [actual >= WET_IN, point.y >= WET_IN];
+      if (rainy && forecastRainy) caught++;
+      if (rainy && !forecastRainy) missed++;
+      if (!rainy && forecastRainy) falseAlarms++;
+      const chance = chances.get(ms);
+      if (chance !== null && chance !== undefined) {
+        (rainy ? chanceWhenRainy : chanceWhenDry).push(chance);
+      }
+    }
+    if (hours) {
+      rows.push({
+        key: line.key,
+        label: line.label,
+        hours,
+        forecastTotal: formatInches(forecastTotal),
+        recordedTotal: formatInches(recordedTotal),
+        caught,
+        missed,
+        falseAlarms,
+        chanceWhenRainy: formatPercent(chanceWhenRainy),
+        chanceWhenDry: formatPercent(chanceWhenDry),
+        wrong: missed + falseAlarms,
+        totalGap: Math.abs(forecastTotal - recordedTotal),
+      });
+    }
+  }
+  return rows
+    .sort((a, b) => a.wrong - b.wrong || a.totalGap - b.totalGap)
+    .map(({ wrong: _wrong, totalGap: _totalGap, ...row }) => row);
+}
+
 // Bands between consecutive sun events, clipped to the range: dusk to dawn is
 // night, dawn to sunrise and sunset to dusk are twilight. Events from a day either
 // side give the bands that start or end outside the range.
@@ -276,7 +432,8 @@ function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
   // Ordered by fetch time, so for each source and hour the last row seen is the
   // latest forecast made at least leadHours before that hour.
   const rows = db.prepare(`
-    SELECT s.source, h.valid_at, h.temp_f, h.dewpoint_f, h.sky_cover_pct, h.low_cloud_pct
+    SELECT s.source, h.valid_at, h.temp_f, h.dewpoint_f, h.sky_cover_pct, h.low_cloud_pct,
+      h.precip_in, h.precip_prob_pct
     FROM forecast_hours h
     JOIN forecast_snapshots s ON s.id = h.snapshot_id
     WHERE h.valid_at >= ? AND s.fetched_at <= datetime(h.valid_at, ?) AND s.kind = ?
@@ -334,6 +491,22 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
   ).all(start) as StationRow[];
   const scores = scoreRows(lines, stationRows, now.getTime());
 
+  // One reading before the range, for the first hour's change in the daily total.
+  const rainRows = db.prepare(`
+    SELECT observed_at, rain_hourly_in, rain_daily_in FROM station_readings
+    WHERE observed_at >= (SELECT COALESCE(MAX(observed_at), ?) FROM station_readings WHERE observed_at < ?)
+    ORDER BY observed_at
+  `).all(start, start) as RainRow[];
+  const stationRain = new Map(
+    [...hourlyStationRain(rainRows, now.getTime())].filter(([hourEnd]) => hourEnd > startMs)
+  );
+  const rainPoints = [...stationRain].map(([hourEnd, y]) => ({ x: midHourIso(hourEnd), y }));
+  const chances = lines.flatMap((line) => line.rainChance.map((p) => p.y)).filter((y) => y !== null);
+  const rain: RainSummary = {
+    any: [...rainPoints, ...lines.flatMap((line) => line.rain)].some((p) => p.y !== null && p.y >= WET_IN),
+    maxChancePct: chances.length ? Math.max(...chances) : null,
+  };
+
   const { lastFetchedAt } = db.prepare(
     "SELECT MAX(fetched_at) AS lastFetchedAt FROM forecast_snapshots WHERE kind = 'live'"
   ).get() as { lastFetchedAt: string | null };
@@ -351,9 +524,12 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
       dewpoint: stationSeries((row) => row.dewpoint_f),
       spread: stationSeries((row) => spread(row.temp_f, row.dewpoint_f)),
       humidity: stationSeries((row) => row.humidity_pct),
+      rain: rainPoints,
     },
     lines,
     scores,
+    rain,
+    rainScores: rain.any ? rainScoreRows(lines, stationRain) : [],
     fogSpreadF: FOG_SPREAD_F,
     leadComparison,
   };

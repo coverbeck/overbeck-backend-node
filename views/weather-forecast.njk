@@ -118,6 +118,48 @@
   100% usually means fog.
 </p>
 
+<h2>Rain</h2>
+{% if comparison.rain.any %}
+<div style="max-width: 900px">
+  <canvas id="rain-chart"></canvas>
+</div>
+<p class="hint">
+  Bars are the rain my station recorded in each hour; solid lines are each forecast's
+  amount for the hour, dashed lines its chance of rain (right-hand scale). Hovering
+  over an hour shows the hour it starts at. NWS gives amounts for blocks of about six
+  hours, spread evenly over them here, and HRRR's chance of rain is left out, since
+  Open-Meteo copies it from NBM. Forecast amounts were first saved on Oct 20, 2026.
+</p>
+
+{% if comparison.rainScores.length %}
+<h3>How the rain forecasts did</h3>
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr><th>Forecast</th><th>Hours</th><th>Forecast total</th><th>Recorded total</th><th>Rainy hours caught</th><th>Missed</th><th>False alarms</th><th>Chance when rainy</th><th>Chance when dry</th></tr>
+    </thead>
+    <tbody>
+      {% for row in comparison.rainScores %}
+      <tr><td>{{ row.label }}</td><td>{{ row.hours }}</td><td>{{ row.forecastTotal }}</td><td>{{ row.recordedTotal }}</td><td>{{ row.caught }}</td><td>{{ row.missed }}</td><td>{{ row.falseAlarms }}</td><td>{{ row.chanceWhenRainy }}</td><td>{{ row.chanceWhenDry }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="hint">
+  Past hours in the range with both a forecast amount and a station measurement. An
+  hour with at least 0.01 in counts as rainy. "Missed" is a rainy hour the forecast had
+  as dry; a false alarm is the reverse. The chance columns are the forecast's average
+  chance of rain in the hours that turned out rainy and dry: a good forecast has a high
+  first number and a low second one. Sorted by missed plus false-alarm hours.
+</p>
+{% endif %}
+{% else %}
+<p>
+  No rain recorded or forecast for these days{% if comparison.rain.maxChancePct %} (the
+  highest chance of rain forecast was {{ comparison.rain.maxChancePct | round }}%){% endif %}.
+</p>
+{% endif %}
+
 <p class="hint">
   Forecasts last fetched: <span class="local-time" data-iso="{{ comparison.lastFetchedAt }}"></span>
 </p>
@@ -494,6 +536,46 @@
       options: chartOptions('%', { min: 0, max: 100 }),
       plugins: [overlays],
     }));
+
+    // Only on the page when there's rain to show.
+    const rainCanvas = document.getElementById('rain-chart');
+    if (rainCanvas) {
+      const rainOptions = chartOptions('Inches in the hour', { min: 0, suggestedMax: 0.1 });
+      rainOptions.scales.y2 = {
+        position: 'right',
+        min: 0,
+        max: 100,
+        title: { display: true, text: 'Chance of rain (%)' },
+        grid: { drawOnChartArea: false },
+      };
+      rainOptions.plugins.tooltip.callbacks.label = ({ dataset, raw }) =>
+        dataset.yAxisID === 'y2'
+          ? `${dataset.label}: ${Math.round(raw.y)}%`
+          : `${dataset.label}: ${raw.y.toFixed(2)} in`;
+      charts.push(new Chart(rainCanvas, {
+        type: 'line',
+        data: {
+          datasets: [
+            {
+              type: 'bar',
+              label: 'My station',
+              data: comparison.station.rain,
+              backgroundColor: STATION_COLOR,
+              barPercentage: 1,
+              categoryPercentage: 0.9,
+            },
+            ...comparison.lines
+              .filter((f) => f.rain.length)
+              .map((f) => forecastLine(f, `${f.label} amount`, f.rain)),
+            ...comparison.lines
+              .filter((f) => f.rainChance.length)
+              .map((f) => forecastLine(f, `${f.label} chance`, f.rainChance, { yAxisID: 'y2', borderDash: [6, 4] })),
+          ],
+        },
+        options: rainOptions,
+        plugins: [overlays],
+      }));
+    }
 
     buildZoomBar();
   }
