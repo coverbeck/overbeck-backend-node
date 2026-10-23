@@ -87,7 +87,8 @@
 
 <h3>Production by day of year</h3>
 <p class="hint">Click a year in the legend to show or hide it. Days left out of the table's lowest and highest days are gaps here too.</p>
-<label><input type="checkbox" id="solar-year-smooth"> 7-day average</label>
+<label><input type="checkbox" class="solar-year-smooth" value="7"> 7-day average</label>
+<label><input type="checkbox" class="solar-year-smooth" value="14"> 14-day average</label>
 <div style="max-width: 900px">
   <canvas id="solar-year-chart"></canvas>
 </div>
@@ -500,13 +501,14 @@
       const month = MONTH_STARTS.findLastIndex((start) => start <= i);
       return `${MONTH_ABBR[month]} ${i - MONTH_STARTS[month] + 1}`;
     };
-    // Centered 7-day mean, from at least 4 days with data.
-    const smooth = (values) => values.map((_, i) => {
-      const window = values.slice(Math.max(0, i - 3), i + 4).filter((v) => v !== null);
-      return window.length >= 4 ? window.reduce((sum, v) => sum + v, 0) / window.length : null;
+    // Centered mean over `days` days, from more than half of them having data.
+    const smooth = (values, days) => values.map((_, i) => {
+      const from = i - Math.floor(days / 2);
+      const window = values.slice(Math.max(0, from), from + days).filter((v) => v !== null);
+      return window.length > days / 2 ? window.reduce((sum, v) => sum + v, 0) / window.length : null;
     });
     const points = (values) => values.map((y, x) => ({ x, y }));
-    const smoothBox = document.getElementById('solar-year-smooth');
+    const smoothBoxes = [...document.querySelectorAll('.solar-year-smooth')];
     const solarYearChart = new Chart(solarYearCanvas, {
       type: 'line',
       data: {
@@ -542,15 +544,24 @@
         },
       },
     });
-    // Also run on load: the browser may restore the checkbox when the page is reloaded.
+    // Also run on load: the browser may restore the checkboxes when the page is reloaded.
     const applySmoothing = () => {
       solarYearChart.data.datasets.forEach((dataset, i) => {
         const values = solarByDayOfYear[i].kwh;
-        dataset.data = points(smoothBox.checked ? smooth(values) : values);
+        const checked = smoothBoxes.find((box) => box.checked);
+        dataset.data = points(checked ? smooth(values, Number(checked.value)) : values);
       });
       solarYearChart.update();
     };
-    smoothBox.addEventListener('change', applySmoothing);
+    // One average at a time: checking one box unchecks the other.
+    for (const box of smoothBoxes) {
+      box.addEventListener('change', () => {
+        if (box.checked) {
+          smoothBoxes.filter((other) => other !== box).forEach((other) => { other.checked = false; });
+        }
+        applySmoothing();
+      });
+    }
     applySmoothing();
   }
 
