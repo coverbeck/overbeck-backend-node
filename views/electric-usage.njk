@@ -84,6 +84,13 @@
   </tfoot>
 </table>
 </div>
+
+<h3>Production by day of year</h3>
+<p class="hint">Click a year in the legend to show or hide it. Days left out of the table's lowest and highest days are gaps here too.</p>
+<label><input type="checkbox" id="solar-year-smooth"> 7-day average</label>
+<div style="max-width: 900px">
+  <canvas id="solar-year-chart"></canvas>
+</div>
 {% else %}
 <p>No solar production data yet.</p>
 {% endif %}
@@ -480,6 +487,72 @@
 
   const defaultPeriodIndex = periodFullLabels.length - 1;
   renderDailyChart(defaultPeriodIndex);
+
+  // Daily solar production by day of year, one line per year; the newest two are shown.
+  const solarByDayOfYear = {{ solarStats.byDayOfYear | dump | safe }};
+  const solarYearCanvas = document.getElementById('solar-year-chart');
+  if (solarYearCanvas) {
+    const YEAR_COLORS = ['#e15759', '#4e79a7', '#59a14f', '#f28e2b', '#76b7b2', '#edc948',
+      '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac', '#17becf', '#8c564b', '#7f7f7f'];
+    // Index of the first day of each month on a leap-year calendar.
+    const MONTH_STARTS = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
+    const dayLabel = (i) => {
+      const month = MONTH_STARTS.findLastIndex((start) => start <= i);
+      return `${MONTH_ABBR[month]} ${i - MONTH_STARTS[month] + 1}`;
+    };
+    // Centered 7-day mean, from at least 4 days with data.
+    const smooth = (values) => values.map((_, i) => {
+      const window = values.slice(Math.max(0, i - 3), i + 4).filter((v) => v !== null);
+      return window.length >= 4 ? window.reduce((sum, v) => sum + v, 0) / window.length : null;
+    });
+    const points = (values) => values.map((y, x) => ({ x, y }));
+    const smoothBox = document.getElementById('solar-year-smooth');
+    const solarYearChart = new Chart(solarYearCanvas, {
+      type: 'line',
+      data: {
+        datasets: solarByDayOfYear.map((series, i) => ({
+          label: series.year,
+          data: points(series.kwh),
+          borderColor: YEAR_COLORS[i % YEAR_COLORS.length],
+          backgroundColor: YEAR_COLORS[i % YEAR_COLORS.length],
+          borderWidth: i === 0 ? 2 : 1.5,
+          pointRadius: 0,
+          hidden: i > 1,
+        })),
+      },
+      options: {
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              title: (items) => dayLabel(items[0].parsed.x),
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'no data' : ctx.parsed.y.toFixed(2) + ' kWh'}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: 365,
+            afterBuildTicks: (axis) => { axis.ticks = MONTH_STARTS.map((value) => ({ value })); },
+            ticks: { callback: (value) => MONTH_ABBR[MONTH_STARTS.indexOf(value)], maxRotation: 0 },
+          },
+          y: { min: 0, title: { display: true, text: 'kWh per day' } },
+        },
+      },
+    });
+    // Also run on load: the browser may restore the checkbox when the page is reloaded.
+    const applySmoothing = () => {
+      solarYearChart.data.datasets.forEach((dataset, i) => {
+        const values = solarByDayOfYear[i].kwh;
+        dataset.data = points(smoothBox.checked ? smooth(values) : values);
+      });
+      solarYearChart.update();
+    };
+    smoothBox.addEventListener('change', applySmoothing);
+    applySmoothing();
+  }
 
   makeUsageChart('gas-chart', periodLabels, periodFullLabels, gasThermsByPeriod, gasCostByPeriod, 'Usage (therms)', 'therms', false);
 </script>

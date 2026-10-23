@@ -59,6 +59,20 @@ export interface SolarStats {
   allYears: SolarYearStats | null;
   glitches: DayStat[]; // days left out of lowest/highest, oldest first
   sunlightFrom: string | null; // first day with station sunlight
+  byDayOfYear: YearSeries[]; // newest first
+}
+
+// One year's daily production for the day-of-year chart: index 0 is Jan 1 and 365 is
+// Dec 31 on a leap-year calendar, so dates line up across years (Feb 29 is null in
+// other years). Missing days and glitches are null.
+export interface YearSeries {
+  year: string;
+  kwh: Array<number | null>;
+}
+
+function dayOfYearIndex(date: string): number {
+  const [, month, day] = date.split('-').map(Number);
+  return (Date.UTC(2024, month - 1, day) - Date.UTC(2024, 0, 1)) / 86_400_000;
 }
 
 function daysInMonth(month: string): number {
@@ -153,11 +167,22 @@ export function computeSolarStats(days: SolarDay[], sunByDate: Map<string, numbe
   const years = [...byYear].reverse().map(([year, yearDays]) =>
     summarize(year, yearDays, sunByDate, yearDays[0].date > `${year}-01-01`, year === currentYear));
 
+  const byDayOfYear = [...byYear].reverse().map(([year, yearDays]) => {
+    const kwh: Array<number | null> = new Array(366).fill(null);
+    for (const day of yearDays) {
+      if (!isGlitch(day)) {
+        kwh[dayOfYearIndex(day.date)] = Math.round(day.kwh * 100) / 100;
+      }
+    }
+    return { year, kwh };
+  });
+
   const sunDates = [...sunByDate.keys()].sort();
   return {
     years,
     allYears: sorted.length ? summarize('All years', sorted, sunByDate, false, false) : null,
     glitches: sorted.filter(isGlitch),
     sunlightFrom: sunDates[0] ?? null,
+    byDayOfYear,
   };
 }
