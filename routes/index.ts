@@ -10,8 +10,10 @@ import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
-import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM } from '../solarSavings.ts';
+import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
 import { computePayback, estimateYearsFromBills, peakShareFromHourly } from '../solarPayback.ts';
+import { computeSolarStats } from '../solarStats.ts';
+import type { SolarDay } from '../solarStats.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RSO_CONTENT_DIR = path.join(__dirname, '..', 'content', 'rso');
@@ -430,8 +432,35 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
   );
   const payback = computePayback(billYears, computeNemYears(savingsRows));
 
+  // Whole days of production: Enphase's daily history (a one-time upload, through
+  // 2026-09-29), then days of 5-minute data after it that are complete and over.
+  const today = todayPacific();
+  const solarHistoryEnd = solarDailyHistory.reduce((max, r) => r.generation_date > max ? r.generation_date : max, '');
+  const solarDays: SolarDay[] = [
+    ...solarDailyHistory.map((r) => ({ date: r.generation_date, kwh: r.generation_kwh })),
+    ...(db.prepare(`
+      SELECT generation_date AS date, SUM(generation_kwh) AS kwh
+      FROM solar_generation
+      WHERE generation_date > ? AND generation_date < ?
+      GROUP BY generation_date
+      HAVING COUNT(*) >= ?
+    `).all(solarHistoryEnd, today, SOLAR_COMPLETE_INTERVALS) as SolarDay[]),
+  ];
+  // Station sunlight per day in kWh/m² (mean W/m² × 24 h), for days with nearly all
+  // of their 288 five-minute readings. Days are cut at midnight PST all year: the
+  // hour's shift in summer falls in darkness, so it doesn't change the totals.
+  const sunRows = db.prepare(`
+    SELECT date(observed_at, '-8 hours') AS date, AVG(solar_wm2) * 24 / 1000 AS kwhM2
+    FROM station_readings
+    WHERE solar_wm2 IS NOT NULL
+    GROUP BY date
+    HAVING COUNT(*) >= 270 AND date < ?
+  `).all(today) as { date: string; kwhM2: number }[];
+  const solarStats = computeSolarStats(solarDays, new Map(sunRows.map((r) => [r.date, r.kwhM2])), today);
+
   res.render('electric-usage.njk', {
     payback,
+    solarStats,
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
     periodWindowStarts: periodRows.map((r) => r.windowStart),

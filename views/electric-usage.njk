@@ -31,6 +31,63 @@
   <canvas id="hourly-chart"></canvas>
 </div>
 
+<h2>Solar Production</h2>
+{% macro shortDate(d, withYear) -%}
+  {%- set names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] -%}
+  {{ names[(d.slice(5, 7) | int) - 1] }} {{ d.slice(8, 10) | int }}{% if withYear %}, {{ d.slice(0, 4) }}{% endif %}
+{%- endmacro %}
+{% macro monthName(m, withYear) -%}
+  {%- set names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] -%}
+  {{ names[(m.slice(5, 7) | int) - 1] }}{% if withYear %} {{ m.slice(0, 4) }}{% endif %}
+{%- endmacro %}
+{% macro statCells(y, withYear, tag) %}
+      <{{ tag }}>{{ y.totalKwh.toFixed(0) }}</{{ tag }}>
+      <{{ tag }}>{{ y.kwhPerDay.toFixed(2) }}</{{ tag }}>
+      <{{ tag }}>{% if y.lowestDay %}{{ y.lowestDay.kwh.toFixed(2) }}<br><span class="hint">{{ shortDate(y.lowestDay.date, withYear) }}</span>{% else %}—{% endif %}</{{ tag }}>
+      <{{ tag }}>{% if y.highestDay %}{{ y.highestDay.kwh.toFixed(2) }}<br><span class="hint">{{ shortDate(y.highestDay.date, withYear) }}</span>{% else %}—{% endif %}</{{ tag }}>
+      <{{ tag }}>{% if y.bestMonth %}{{ y.bestMonth.kwhPerDay.toFixed(2) }}<br><span class="hint">{{ monthName(y.bestMonth.month, withYear) }}</span>{% else %}—{% endif %}</{{ tag }}>
+      <{{ tag }}>{% if y.worstMonth %}{{ y.worstMonth.kwhPerDay.toFixed(2) }}<br><span class="hint">{{ monthName(y.worstMonth.month, withYear) }}</span>{% else %}—{% endif %}</{{ tag }}>
+      <{{ tag }}>{% if y.sunHoursPerDay !== null %}{{ y.sunHoursPerDay.toFixed(2) }}{% if y.sunDays < y.days %}<br><span class="hint">{{ y.sunDays }} days</span>{% endif %}{% else %}—{% endif %}</{{ tag }}>
+      <{{ tag }}>{{ y.kwhPerSunHour.toFixed(2) if y.kwhPerSunHour !== null else '—' }}</{{ tag }}>
+{% endmacro %}
+{% if solarStats.allYears %}
+<p class="hint">Daily production in kWh. Best and worst months are the average per day over complete months, so short months aren't penalized.{% if solarStats.glitches.length %} The lowest and highest days leave out {{ solarStats.glitches.length }} days under 0.1 or over 14 kWh, between {{ shortDate(solarStats.glitches[0].date, true) }} and {{ shortDate(solarStats.glitches[solarStats.glitches.length - 1].date, true) }}: the monitoring kept dropping out then, and missed production was reported on later days. They still count in the totals and months.{% endif %}</p>
+{% if solarStats.sunlightFrom %}<p class="hint">Sunlight is the backyard station's solar radiation over the day, in sun-hours (kWh per m²: hours of full noon sun giving the same energy), from {{ shortDate(solarStats.sunlightFrom, true) }}, on days the station recorded completely. kWh per sun-hour is production divided by sunlight on the same days, roughly the size in kW the panels are performing like. The sensor is flat and the panels are tilted, so it runs higher in winter; compare full years only.</p>{% endif %}
+<div class="table-scroll">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Year</th>
+      <th>Total (kWh)</th>
+      <th>Per day</th>
+      <th>Lowest day</th>
+      <th>Highest day</th>
+      <th>Best month</th>
+      <th>Worst month</th>
+      <th>Sunlight (sun-hours/day)</th>
+      <th>kWh per sun-hour</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for y in solarStats.years %}
+    <tr>
+      <td>{{ y.label }}{% if y.partialStart %}<br><span class="hint">from {{ shortDate(y.firstDate) }}</span>{% elif y.partialEnd %}<br><span class="hint">through {{ shortDate(y.lastDate) }}</span>{% endif %}</td>
+{{ statCells(y, false, 'td') }}
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <th>{{ solarStats.allYears.label }}<br><span class="hint">{{ shortDate(solarStats.allYears.firstDate, true) }} – {{ shortDate(solarStats.allYears.lastDate, true) }}</span></th>
+{{ statCells(solarStats.allYears, true, 'th') }}
+    </tr>
+  </tfoot>
+</table>
+</div>
+{% else %}
+<p>No solar production data yet.</p>
+{% endif %}
+
 <h2>Solar Savings</h2>
 {% macro dollars(v) %}{{ '-' if v < 0 }}${{ (v if v >= 0 else -v).toFixed(2) }}{% endmacro %}
 {% if payback.years.length %}
