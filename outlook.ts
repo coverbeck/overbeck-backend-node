@@ -6,9 +6,11 @@
 //
 // Temperatures are our estimate (see estimate.ts) where it has the hour, otherwise
 // the average of its base sources (NWS, NBM, HRRR). Wind and rain are always that
-// average, from each source's latest forecast. Nights give the low and the
-// temperature at 7 am, even when 7 am is after sunrise; days give the low and high,
-// and the wind. Both give the chance of rain.
+// average, from each source's latest forecast. Each period starts from the
+// temperature after sunset or sunrise, or the station's current reading once it's
+// under way. Nights go on to the low and the temperature at 7 am (even when that's
+// after sunrise); days to the high and the temperature at sunset, then the wind.
+// Both give the chance of rain.
 
 import db from './db/index.ts';
 import { BASE_SOURCES } from './estimate.ts';
@@ -19,6 +21,7 @@ import { sunEventsBetween } from './sun.ts';
 const HOUR_MS = 3600 * 1000;
 const STALE_MS = 3 * HOUR_MS; // forecasts fetched longer ago than this aren't used
 const WAKE_HOUR = 7;
+const CURRENT_MS = 30 * 60 * 1000; // a station reading this recent counts as current
 const CALM_MPH = 3;
 const RAIN_CHANCE_PCT = 20; // below this (and no measurable amount), "no rain expected"
 const RAIN_LIKELY_PCT = 60;
@@ -53,6 +56,10 @@ export interface TempAt {
   at: string; // ISO
 }
 
+export interface Opening extends TempAt {
+  current: boolean; // the station's reading now, rather than a forecast hour
+}
+
 export interface OutlookWind {
   minMph: number;
   maxMph: number;
@@ -72,9 +79,11 @@ export interface OutlookPeriod {
   label: string; // "Today", "Tonight", "Tomorrow"
   start: string; // ISO, sunrise or sunset (or now, for the current period)
   end: string; // ISO
-  low: TempAt | null;
-  high: TempAt | null; // days only
+  opening: Opening;
+  low: TempAt | null; // nights only
   atWake: TempAt | null; // nights only: 7 am
+  high: TempAt | null; // days only
+  atSunset: TempAt | null; // days only: the last hour before sunset
   wind: OutlookWind | null; // days only
   rain: OutlookRain;
   text: string;
@@ -83,7 +92,7 @@ export interface OutlookPeriod {
 export interface Outlook {
   madeAt: string; // ISO
   periods: OutlookPeriod[];
-  text: string; // every period's text, with its label, for reading aloud
+  text: string; // every period's text, for reading aloud
 }
 
 function pacificHour(ms: number): number {
@@ -169,6 +178,17 @@ function loadHours(now: Date): OutlookHour[] {
   });
 }
 
+// The station's latest temperature, if it's recent enough to call current.
+function currentStationTemp(now: Date): TempAt | null {
+  const row = db.prepare(`
+    SELECT observed_at, temp_f FROM station_readings
+    WHERE temp_f IS NOT NULL AND observed_at >= ? AND observed_at <= ?
+    ORDER BY observed_at DESC LIMIT 1
+  `).get(toSqliteUtc(new Date(now.getTime() - CURRENT_MS)), toSqliteUtc(now)) as
+    { observed_at: string; temp_f: number } | undefined;
+  return row ? { tempF: Math.round(row.temp_f), at: fromSqliteUtc(row.observed_at).toISOString() } : null;
+}
+
 // The first hour with the lowest (or highest) temperature, rounded to whole degrees.
 function extreme(hours: OutlookHour[], pick: 'low' | 'high'): TempAt | null {
   let best: { tempF: number; at: number } | null = null;
@@ -238,42 +258,57 @@ function windText(wind: OutlookWind): string {
   return `Winds out of the ${wind.direction} ${speed}${peak}${gusts}.`;
 }
 
-// `firstMs` is the period's first hour; when the low is then and the day is already
-// under way, it's just the next hour's temperature, not a morning low.
-function dayText(low: TempAt | null, high: TempAt | null, firstMs: number, underway: boolean, endMs: number): string {
-  if (!low || !high) {
-    return '';
-  }
-  const lowAt = Date.parse(low.at);
-  const highAt = Date.parse(high.at);
-  if (low.tempF === high.tempF) {
-    return `Steady around ${high.tempF}°.`;
-  }
-  if (lowAt < highAt) {
-    const start = underway && lowAt === firstMs
-      ? `${low.tempF}° at ${clockTime(lowAt)}`
-      : `Low of ${low.tempF}° around ${clockTime(lowAt)}`;
-    return `${start}, rising to a high of ${high.tempF}° around ${clockTime(highAt)}.`;
-  }
-  // The high has come already (the rest of the afternoon): it cools toward sunset.
-  return `High of ${high.tempF}° around ${clockTime(highAt)}, cooling to ${low.tempF}° by ${clockTime(Math.min(lowAt, endMs))}.`;
+function tempAt(hour: OutlookHour & { tempF: number }): TempAt {
+  return { tempF: Math.round(hour.tempF), at: new Date(hour.at).toISOString() };
 }
 
-function nightText(low: TempAt | null, atWake: TempAt | null): string {
-  if (!low) {
-    return atWake ? `${atWake.tempF}° at ${clockTime(Date.parse(atWake.at))}.` : '';
+// "Tonight's temperature will be 60° after sunset", or "Current temperature is 58°".
+function openingText(opening: Opening, label: string, kind: 'day' | 'night', firstHour: boolean): string {
+  if (opening.current) {
+    return `Current temperature is ${opening.tempF}°`;
   }
-  const lowText = `Low of ${low.tempF}° around ${clockTime(Date.parse(low.at))}`;
+  const when = firstHour ? `after ${kind === 'night' ? 'sunset' : 'sunrise'}` : `at ${clockTime(Date.parse(opening.at))}`;
+  return `${label}'s temperature will be ${opening.tempF}° ${when}`;
+}
+
+// "…, dropping to a low of 50° around 4 am, then 52° at 7 am." When 7 am rounds to
+// the low (about half of nights, from the station's history), it's "a low of 51° by
+// 7 am"; a degree above, "about the same at 7 am".
+function nightText(opening: Opening, low: TempAt | null, atWake: TempAt | null): string {
+  if (!low) {
+    return '';
+  }
+  const lowTime = clockTime(Date.parse(low.at));
   if (!atWake) {
-    return `${lowText}.`;
+    return low.tempF < opening.tempF ? `, dropping to a low of ${low.tempF}° around ${lowTime}` : '';
   }
   const wake = clockTime(Date.parse(atWake.at));
-  if (atWake.at === low.at) {
-    return `Low of ${low.tempF}° at ${wake}.`;
+  if (low.tempF >= opening.tempF) {
+    return atWake.tempF > opening.tempF + 1
+      ? `, rising to ${atWake.tempF}° by ${wake}`
+      : `, holding near ${opening.tempF}° through ${wake}`;
   }
-  return atWake.tempF === low.tempF
-    ? `${lowText}, still ${atWake.tempF}° at ${wake}.`
-    : `${lowText}, ${atWake.tempF}° by ${wake}.`;
+  if (atWake.tempF === low.tempF) {
+    return `, dropping to a low of ${low.tempF}° by ${wake}`;
+  }
+  const after = atWake.tempF === low.tempF + 1 ? `about the same at ${wake}` : `then ${atWake.tempF}° at ${wake}`;
+  return `, dropping to a low of ${low.tempF}° around ${lowTime}, ${after}`;
+}
+
+// "…, rising to a high of 71° around 3 pm, then 65° by sunset."
+function dayText(opening: Opening, high: TempAt | null, atSunset: TempAt | null): string {
+  if (!high || !atSunset) {
+    return '';
+  }
+  if (high.tempF > opening.tempF) {
+    return high.at === atSunset.at
+      ? `, rising to a high of ${high.tempF}° by sunset`
+      : `, rising to a high of ${high.tempF}° around ${clockTime(Date.parse(high.at))}, then ${atSunset.tempF}° by sunset`;
+  }
+  // Past the warmest part of the day.
+  return atSunset.tempF < opening.tempF
+    ? `, cooling to ${atSunset.tempF}° by sunset`
+    : `, holding near ${opening.tempF}° until sunset`;
 }
 
 function label(kind: 'day' | 'night', startMs: number, nowMs: number): string {
@@ -288,6 +323,7 @@ function buildPeriod(
   startMs: number,
   endMs: number,
   hours: OutlookHour[],
+  station: TempAt | null,
   nowMs: number,
 ): OutlookPeriod | null {
   // Temperatures at the hours inside the period, from the next hour on.
@@ -297,34 +333,43 @@ function buildPeriod(
   if (lastAt === undefined || lastAt < endMs - HOUR_MS) {
     return null;
   }
-  const low = extreme(inPeriod, 'low');
+  const temps = inPeriod.filter((h): h is OutlookHour & { tempF: number } => h.tempF !== null);
+  const periodLabel = label(kind, startMs, nowMs);
+  const underway = startMs < nowMs;
+  const opening: Opening = underway && station
+    ? { ...station, current: true }
+    : { ...tempAt(temps[0]), current: false };
   const rain = rainSummary(hours, Math.max(startMs, nowMs), endMs);
-  const sentences: string[] = [];
-  let high: TempAt | null = null;
+  let low: TempAt | null = null;
   let atWake: TempAt | null = null;
+  let high: TempAt | null = null;
+  let atSunset: TempAt | null = null;
   let wind: OutlookWind | null = null;
+  let temperature = openingText(opening, periodLabel, kind, !underway);
   if (kind === 'day') {
     high = extreme(inPeriod, 'high');
+    atSunset = tempAt(temps[temps.length - 1]);
     wind = windSummary(inPeriod);
-    sentences.push(dayText(low, high, inPeriod[0].at, startMs < nowMs, endMs));
-    if (wind) {
-      sentences.push(windText(wind));
-    }
+    temperature += dayText(opening, high, atSunset);
   } else {
+    low = extreme(inPeriod, 'low');
     // The first 7 am after the night starts, even if the sun is up by then.
-    const wake = hours.find((h) => h.at > startMs && h.at > nowMs && pacificHour(h.at) === WAKE_HOUR);
-    atWake = wake?.tempF != null ? { tempF: Math.round(wake.tempF), at: new Date(wake.at).toISOString() } : null;
-    sentences.push(nightText(low, atWake));
+    const wake = hours.find((h): h is OutlookHour & { tempF: number } =>
+      h.at > startMs && h.at > nowMs && h.tempF !== null && pacificHour(h.at) === WAKE_HOUR);
+    atWake = wake ? tempAt(wake) : null;
+    temperature += nightText(opening, low, atWake);
   }
-  sentences.push(rainText(rain, Math.max(startMs, nowMs)));
+  const sentences = [`${temperature}.`, wind ? windText(wind) : '', rainText(rain, Math.max(startMs, nowMs))];
   return {
     kind,
-    label: label(kind, startMs, nowMs),
+    label: periodLabel,
     start: new Date(Math.max(startMs, nowMs)).toISOString(),
     end: new Date(endMs).toISOString(),
+    opening,
     low,
-    high,
     atWake,
+    high,
+    atSunset,
     wind,
     rain,
     text: sentences.filter(Boolean).join(' '),
@@ -338,14 +383,17 @@ export function getOutlook(now: Date): Outlook | null {
   if (!hours.length) {
     return null;
   }
-  // Sunrises and sunsets from the last one before now through the next two.
+  // Sunrises and sunsets from the last one before now through the next three. The
+  // current period has no hours left in the last minutes before sunrise or sunset,
+  // and then the two after it are shown.
   const events = sunEventsBetween(nowMs - 24 * HOUR_MS, nowMs + 48 * HOUR_MS)
     .filter((e) => e.type === 'sunrise' || e.type === 'sunset');
   const currentIndex = events.filter((e) => e.at <= nowMs).length - 1;
+  const station = currentStationTemp(now);
   const periods: OutlookPeriod[] = [];
-  for (let i = currentIndex; i < currentIndex + 2 && i + 1 < events.length; i++) {
+  for (let i = currentIndex; i < currentIndex + 3 && i + 1 < events.length && periods.length < 2; i++) {
     const kind = events[i].type === 'sunrise' ? 'day' : 'night';
-    const period = buildPeriod(kind, events[i].at, events[i + 1].at, hours, nowMs);
+    const period = buildPeriod(kind, events[i].at, events[i + 1].at, hours, station, nowMs);
     if (period) {
       periods.push(period);
     }
@@ -356,6 +404,6 @@ export function getOutlook(now: Date): Outlook | null {
   return {
     madeAt: now.toISOString(),
     periods,
-    text: periods.map((p) => `${p.label}: ${p.text}`).join(' '),
+    text: periods.map((p) => p.text).join(' '),
   };
 }
