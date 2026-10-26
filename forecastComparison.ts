@@ -5,14 +5,14 @@ import { sunEventsBetween } from './sun.ts';
 
 // Data for the /weather/forecast charts: the station's readings over the last few
 // days alongside each source's forecast, from the start of the range through the
-// end of the latest forecast. For each hour, a source's line shows the latest
+// next 18 hours. For each hour, a source's line shows the latest
 // forecast it made at least `leadHours` before that hour, so past hours show what
 // the forecast said in advance rather than a forecast fetched after the fact.
 // Leads up to 12 hours use the live fetches; the 24-hour lead uses Open-Meteo's
 // archive of day-ahead forecasts (kind 'archive_day1'), which has no NWS.
 
 const HOUR_MS = 3600 * 1000;
-const FORECAST_HOURS = 18;
+const FORECAST_HOURS = 18; // the charts' window; forecasts are fetched further ahead
 const MATCH_MS = 5 * 60 * 1000; // a station reading within 5 minutes counts as "at" the hour
 
 // Temperature within this many °F of the dew point: dew or fog likely.
@@ -428,10 +428,10 @@ function sunBands(startMs: number, endMs: number): SunBands {
   return bands;
 }
 
-// The average line followed by each source's line, from `start` on, using for each
+// The average line followed by each source's line, over [start, end), using for each
 // hour the latest forecast made at least leadHours before it. The average is of the
 // fetched forecasts only, not our estimate.
-function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
+function forecastLines(start: string, end: string, leadHours: LeadHours): ForecastLine[] {
   // Ordered by fetch time, so for each source and hour the last row seen is the
   // latest forecast made at least leadHours before that hour.
   const rows = db.prepare(`
@@ -439,10 +439,11 @@ function forecastLines(start: string, leadHours: LeadHours): ForecastLine[] {
       h.precip_in, h.precip_prob_pct
     FROM forecast_hours h
     JOIN forecast_snapshots s ON s.id = h.snapshot_id
-    WHERE h.valid_at >= ? AND s.fetched_at <= datetime(h.valid_at, ?) AND s.kind = ?
+    WHERE h.valid_at >= ? AND h.valid_at < ? AND s.fetched_at <= datetime(h.valid_at, ?) AND s.kind = ?
     ORDER BY s.fetched_at
   `).all(
     start,
+    end,
     `-${leadHours} hours`,
     leadHours === ARCHIVE_LEAD_HOURS ? 'archive_day1' : 'live',
   ) as ForecastRow[];
@@ -471,8 +472,9 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
   const startMs = startOfHour(now).getTime() - days * 24 * HOUR_MS;
   const endMs = startOfHour(now).getTime() + FORECAST_HOURS * HOUR_MS;
   const start = toSqliteUtc(new Date(startMs));
+  const end = toSqliteUtc(new Date(endMs));
 
-  const linesByLead = new Map(LEAD_HOURS.map((lead) => [lead, forecastLines(start, lead)]));
+  const linesByLead = new Map(LEAD_HOURS.map((lead) => [lead, forecastLines(start, end, lead)]));
   const lines = linesByLead.get(leadHours) ?? [];
   // Every line found at any lead (the archive has no NWS, and live data may not reach
   // back through the whole range), with only the leads that have data.

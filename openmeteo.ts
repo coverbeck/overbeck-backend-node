@@ -20,6 +20,7 @@ const VARIABLES = [
   'cloud_cover_low',
   'wind_speed_10m',
   'wind_direction_10m',
+  'wind_gusts_10m',
   'precipitation_probability',
   // Rain in the preceding hour, like shortwave_radiation below.
   'precipitation',
@@ -63,8 +64,8 @@ async function fetchHourly(url: string): Promise<ForecastResponse['hourly']> {
 
 // Splits a response into one forecast per model, keeping the hours in [start, end).
 // `suffix` comes between the variable and model names (e.g. '_previous_day1').
-// With skipEmptyHours, hours with no temperature are left out, for the archive,
-// where a model's history has gaps.
+// With skipEmptyHours, hours with no temperature are left out: past the end of a
+// shorter model run (HRRR usually covers 18 hours), or gaps in the archive.
 function toForecasts(
   hourly: ForecastResponse['hourly'],
   suffix: string,
@@ -95,6 +96,7 @@ function toForecasts(
         lowCloudPct: series('cloud_cover_low')[i] ?? null,
         windMph: series('wind_speed_10m')[i] ?? null,
         windDirDeg: series('wind_direction_10m')[i] ?? null,
+        gustMph: series('wind_gusts_10m')[i] ?? null,
         precipProbPct: series('precipitation_probability')[i] ?? null,
         solarWm2: series('shortwave_radiation')[i] ?? null,
         precipIn: series('precipitation')[i] ?? null,
@@ -116,7 +118,7 @@ export async function getOpenMeteoForecasts(now: Date, hoursAhead: number): Prom
   });
   const hourly = await fetchHourly(`https://api.open-meteo.com/v1/forecast?${params}`);
   const { start, end } = forecastWindow(now, hoursAhead);
-  return toForecasts(hourly, '', start, end, false);
+  return toForecasts(hourly, '', start, end, true);
 }
 
 // Earliest `_previous_day1` data, checked 2026-10-07.

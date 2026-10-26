@@ -8,6 +8,14 @@
 <h1>My Weather</h1>
 {% include "partials/weather-tabs.njk" %}
 
+{% if outlook %}
+<div class="outlook">
+  {% for period in outlook.periods %}
+  <p><strong>{{ period.label }}:</strong> {{ period.text }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
 <p>
   Forecasts for my station's location from four sources, plus our own estimate, saved
   every hour, alongside what the station actually recorded. Left of the dashed "now" line, each forecast line

@@ -227,3 +227,16 @@ main {
   opacity: 0.35;
   cursor: default;
 }
+
+.outlook {
+  max-width: 900px;
+  margin-bottom: 1.5rem;
+  padding: 0.25rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f7f7f7;
+}
+
+.outlook p {
+  margin: 0.6rem 0;
+}

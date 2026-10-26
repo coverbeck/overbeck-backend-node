@@ -212,6 +212,7 @@ db.exec(`
     low_cloud_pct REAL,
     wind_mph REAL,
     wind_dir_deg REAL,
+    gust_mph REAL,
     precip_prob_pct REAL,
     solar_wm2 REAL,
     precip_in REAL,
@@ -220,6 +221,7 @@ db.exec(`
 `);
 db.exec('CREATE INDEX IF NOT EXISTS idx_forecast_hours_valid_at ON forecast_hours(valid_at)');
 addColumnIfMissing('forecast_hours', 'precip_in', 'REAL');
+addColumnIfMissing('forecast_hours', 'gust_mph', 'REAL');
 
 // Ambient station history at full 5-minute resolution. Columns are nullable
 // since individual sensors can drop out. rain_hourly_in is Ambient's hourlyrainin,

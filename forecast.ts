@@ -15,6 +15,7 @@ export interface ForecastHour {
   lowCloudPct: number | null;
   windMph: number | null;
   windDirDeg: number | null;
+  gustMph: number | null;
   precipProbPct: number | null;
   solarWm2: number | null; // shortwave radiation, W/m²
   precipIn: number | null; // rain in the hour ending at validAt, inches

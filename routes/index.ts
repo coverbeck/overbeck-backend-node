@@ -8,6 +8,7 @@ import db from '../db/index.ts';
 import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
+import { getOutlook } from '../outlook.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
@@ -73,7 +74,20 @@ router.get('/weather/forecast', (req: Request, res: Response) => {
     rangeDays: RANGE_DAYS,
     leadHours: LEAD_HOURS,
     comparison: getForecastComparison(new Date(), days, lead),
+    outlook: getOutlook(new Date()),
   });
+});
+
+// The outlook at the top of /weather/forecast, for a Siri Shortcut to read `text`
+// aloud. Public, like the page; it has no coordinates.
+router.get('/api/weather/outlook', (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  const outlook = getOutlook(new Date());
+  if (!outlook) {
+    res.status(503).json({ error: 'No recent forecast' });
+    return;
+  }
+  res.json(outlook);
 });
 
 router.get('/weather/loch-lomond', (req: Request, res: Response) => {

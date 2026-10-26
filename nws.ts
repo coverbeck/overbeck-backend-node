@@ -21,6 +21,7 @@ interface GridpointsResponse {
     skyCover: GridLayer;
     windSpeed: GridLayer;
     windDirection: GridLayer;
+    windGust: GridLayer;
     probabilityOfPrecipitation: GridLayer;
     quantitativePrecipitation: GridLayer;
   };
@@ -93,6 +94,7 @@ export async function getNwsForecast(now: Date, hoursAhead: number): Promise<For
   const skyCover = expandLayer(p.skyCover);
   const windSpeed = expandLayer(p.windSpeed);
   const windDir = expandLayer(p.windDirection);
+  const windGust = expandLayer(p.windGust);
   const precipProb = expandLayer(p.probabilityOfPrecipitation);
   // NWS gives rain amounts in blocks of about 6 hours, spread evenly here.
   const precip = expandLayer(p.quantitativePrecipitation, true);
@@ -112,6 +114,7 @@ export async function getNwsForecast(now: Date, hoursAhead: number): Promise<For
       lowCloudPct: null, // NWS doesn't forecast low cloud separately
       windMph: windSpeed.get(t) ?? null,
       windDirDeg: windDir.get(t) ?? null,
+      gustMph: windGust.get(t) ?? null,
       precipProbPct: precipProb.get(t) ?? null,
       solarWm2: null, // not in the NWS grid data
       precipIn: precip.get(t - HOUR_MS) ?? null, // the hour ending at t, like Open-Meteo

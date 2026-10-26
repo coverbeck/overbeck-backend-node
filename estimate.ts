@@ -28,10 +28,10 @@ const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 export const ESTIMATE_WINDOW_DAYS = 14;
 export const BASE_SOURCES: readonly ForecastSource[] = ['nws', 'om_nbm', 'om_hrrr'];
-// Groups of hours ahead, each with its own bias and fade. The forecast window is
-// the current hour plus 17 more; the current hour itself isn't estimated, since the
-// station already knows it.
-const LEAD_GROUPS: ReadonlyArray<readonly [number, number]> = [[1, 3], [4, 9], [10, 17]];
+// Groups of hours ahead, each with its own bias and fade. Forecasts are fetched for
+// the current hour plus 35 more; the current hour itself isn't estimated, since the
+// station already knows it. Past HRRR's usual 18 hours, the base is NWS and NBM only.
+const LEAD_GROUPS: ReadonlyArray<readonly [number, number]> = [[1, 3], [4, 9], [10, 17], [18, 35]];
 // The bias and fade get weight runs / (runs + TRUST_RUNS): half after two days of
 // hourly runs, 7/8 after two weeks. (168, a week to half weight, was slightly worse
 // in the Oct 2026 backtest.)
