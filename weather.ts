@@ -34,7 +34,7 @@ export async function getCurrentWeather(): Promise<WeatherReading> {
   }
 
   const url = `https://api.ambientweather.net/v1/devices?applicationKey=${applicationKey}&apiKey=${apiKey}`;
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
   if (!response.ok) {
     throw new Error(`Ambient Weather API returned ${response.status}`);
   }

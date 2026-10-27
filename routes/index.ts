@@ -8,7 +8,7 @@ import db from '../db/index.ts';
 import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
-import { getOutlook } from '../outlook.ts';
+import { getOutlook, liveStationTemp } from '../outlook.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
@@ -63,7 +63,7 @@ router.get('/weather', async (req: Request, res: Response) => {
   });
 });
 
-router.get('/weather/forecast', (req: Request, res: Response) => {
+router.get('/weather/forecast', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   const days = RANGE_DAYS.find((d) => d === Number(req.query.days)) ?? 1;
   const lead = LEAD_HOURS.find((h) => h === Number(req.query.lead)) ?? 0;
@@ -74,15 +74,15 @@ router.get('/weather/forecast', (req: Request, res: Response) => {
     rangeDays: RANGE_DAYS,
     leadHours: LEAD_HOURS,
     comparison: getForecastComparison(new Date(), days, lead),
-    outlook: getOutlook(new Date()),
+    outlook: getOutlook(new Date(), await liveStationTemp()),
   });
 });
 
 // The outlook at the top of /weather/forecast, for a Siri Shortcut to read `text`
 // aloud. Public, like the page; it has no coordinates.
-router.get('/api/weather/outlook', (req: Request, res: Response) => {
+router.get('/api/weather/outlook', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
-  const outlook = getOutlook(new Date());
+  const outlook = getOutlook(new Date(), await liveStationTemp());
   if (!outlook) {
     res.status(503).json({ error: 'No recent forecast' });
     return;
