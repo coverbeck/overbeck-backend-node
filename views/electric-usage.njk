@@ -497,6 +497,17 @@
 
   const YEAR_COLORS = ['#e15759', '#4e79a7', '#59a14f', '#f28e2b', '#76b7b2', '#edc948',
     '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac', '#17becf', '#8c564b', '#7f7f7f'];
+  // The average of all years comes last in each chart's series and is always shown.
+  const AVERAGE_LABEL = {{ averageLabel | dump | safe }};
+  const yearLineStyle = (year, i) => {
+    const color = year === AVERAGE_LABEL ? '#444' : YEAR_COLORS[i % YEAR_COLORS.length];
+    return {
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: year === AVERAGE_LABEL ? 2.5 : i === 0 ? 2 : 1.5,
+      borderDash: year === AVERAGE_LABEL ? [6, 3] : [],
+    };
+  };
 
   // Daily solar production by day of year, one line per year; the newest two are shown.
   const solarByDayOfYear = {{ solarStats.byDayOfYear | dump | safe }};
@@ -522,11 +533,9 @@
         datasets: solarByDayOfYear.map((series, i) => ({
           label: series.year,
           data: points(series.kwh),
-          borderColor: YEAR_COLORS[i % YEAR_COLORS.length],
-          backgroundColor: YEAR_COLORS[i % YEAR_COLORS.length],
-          borderWidth: i === 0 ? 2 : 1.5,
+          ...yearLineStyle(series.year, i),
           pointRadius: 0,
-          hidden: i > 1,
+          hidden: i > 1 && series.year !== AVERAGE_LABEL,
         })),
       },
       options: {
@@ -583,11 +592,9 @@
         datasets: solarByMonth.map((series, i) => ({
           label: series.year,
           data: series.kwhPerDay,
-          borderColor: YEAR_COLORS[i % YEAR_COLORS.length],
-          backgroundColor: YEAR_COLORS[i % YEAR_COLORS.length],
-          borderWidth: i === 0 ? 2 : 1.5,
+          ...yearLineStyle(series.year, i),
           pointRadius: 3,
-          hidden: i > 1,
+          hidden: i > 1 && series.year !== AVERAGE_LABEL,
         })),
       },
       options: {
@@ -598,8 +605,9 @@
               label: (ctx) => {
                 const days = solarByMonth[ctx.datasetIndex].days[ctx.dataIndex];
                 const full = new Date(Date.UTC(Number(ctx.dataset.label), ctx.dataIndex + 1, 0)).getUTCDate();
+                const partial = ctx.dataset.label !== AVERAGE_LABEL && days < full;
                 return `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'no data'
-                  : ctx.parsed.y.toFixed(2) + ' kWh/day' + (days < full ? ` (${days} days)` : '')}`;
+                  : ctx.parsed.y.toFixed(2) + ' kWh/day' + (partial ? ` (${days} days)` : '')}`;
               },
             },
           },

@@ -59,13 +59,16 @@ export interface SolarStats {
   allYears: SolarYearStats | null;
   glitches: DayStat[]; // days left out of lowest/highest, oldest first
   sunlightFrom: string | null; // first day with station sunlight
-  byDayOfYear: YearSeries[]; // newest first
-  byMonth: YearMonths[]; // newest first
+  byDayOfYear: YearSeries[]; // newest first, then the average of all years
+  byMonth: YearMonths[]; // newest first, then the average of all years
 }
+
+export const AVERAGE_LABEL = 'Average';
 
 // One year's daily production for the day-of-year chart: index 0 is Jan 1 and 365 is
 // Dec 31 on a leap-year calendar, so dates line up across years (Feb 29 is null in
-// other years). Missing days and glitches are null.
+// other years). Missing days and glitches are null. The average's `year` is
+// AVERAGE_LABEL; each day is the mean of the years that have it.
 export interface YearSeries {
   year: string;
   kwh: Array<number | null>;
@@ -74,7 +77,8 @@ export interface YearSeries {
 // One year's average daily production in each month, for the by-month chart: index 0
 // is January. Every day counts, as in the table's best and worst months, and a month
 // in progress or before the install is averaged over the days it has. Months with no
-// days are null.
+// days are null. The average's `year` is AVERAGE_LABEL; each month is all years'
+// production over all their days in it, and `days` is that total.
 export interface YearMonths {
   year: string;
   kwhPerDay: Array<number | null>;
@@ -187,11 +191,18 @@ export function computeSolarStats(days: SolarDay[], sunByDate: Map<string, numbe
     }
     return { year, kwh };
   });
+  if (byDayOfYear.length) {
+    const kwh = new Array(366).fill(null).map((_, i) => {
+      const values = byDayOfYear.map((series) => series.kwh[i]).filter((v): v is number => v !== null);
+      return values.length ? Math.round((values.reduce((sum, v) => sum + v, 0) / values.length) * 100) / 100 : null;
+    });
+    byDayOfYear.push({ year: AVERAGE_LABEL, kwh });
+  }
 
-  const byMonth = [...byYear].reverse().map(([year, yearDays]) => {
+  const monthAverages = (year: string, monthDays: SolarDay[]): YearMonths => {
     const kwh: number[] = new Array(12).fill(0);
     const counts: number[] = new Array(12).fill(0);
-    for (const day of yearDays) {
+    for (const day of monthDays) {
       const month = Number(day.date.slice(5, 7)) - 1;
       kwh[month] += day.kwh;
       counts[month]++;
@@ -201,7 +212,11 @@ export function computeSolarStats(days: SolarDay[], sunByDate: Map<string, numbe
       kwhPerDay: kwh.map((total, i) => (counts[i] ? Math.round((total / counts[i]) * 100) / 100 : null)),
       days: counts,
     };
-  });
+  };
+  const byMonth = [...byYear].reverse().map(([year, yearDays]) => monthAverages(year, yearDays));
+  if (sorted.length) {
+    byMonth.push(monthAverages(AVERAGE_LABEL, sorted));
+  }
 
   const sunDates = [...sunByDate.keys()].sort();
   return {

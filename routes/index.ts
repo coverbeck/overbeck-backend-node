@@ -13,7 +13,7 @@ import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
 import { computePayback, estimateYearsFromBills, peakShareFromHourly } from '../solarPayback.ts';
-import { computeSolarStats } from '../solarStats.ts';
+import { AVERAGE_LABEL, computeSolarStats } from '../solarStats.ts';
 import type { SolarDay } from '../solarStats.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -475,6 +475,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
   res.render('electric-usage.njk', {
     payback,
     solarStats,
+    averageLabel: AVERAGE_LABEL,
     periodLabels: periodRows.map((r) => r.shortLabel),
     periodFullLabels: periodRows.map((r) => r.fullLabel),
     periodWindowStarts: periodRows.map((r) => r.windowStart),
