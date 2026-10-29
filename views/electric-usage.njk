@@ -92,6 +92,12 @@
 <div style="max-width: 900px">
   <canvas id="solar-year-chart"></canvas>
 </div>
+
+<h3>Average daily production by month</h3>
+<p class="hint">Click a year in the legend to show or hide it. Months in progress or before the panels went in are averaged over the days they have.</p>
+<div style="max-width: 900px">
+  <canvas id="solar-month-chart"></canvas>
+</div>
 {% else %}
 <p>No solar production data yet.</p>
 {% endif %}
@@ -489,12 +495,13 @@
   const defaultPeriodIndex = periodFullLabels.length - 1;
   renderDailyChart(defaultPeriodIndex);
 
+  const YEAR_COLORS = ['#e15759', '#4e79a7', '#59a14f', '#f28e2b', '#76b7b2', '#edc948',
+    '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac', '#17becf', '#8c564b', '#7f7f7f'];
+
   // Daily solar production by day of year, one line per year; the newest two are shown.
   const solarByDayOfYear = {{ solarStats.byDayOfYear | dump | safe }};
   const solarYearCanvas = document.getElementById('solar-year-chart');
   if (solarYearCanvas) {
-    const YEAR_COLORS = ['#e15759', '#4e79a7', '#59a14f', '#f28e2b', '#76b7b2', '#edc948',
-      '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac', '#17becf', '#8c564b', '#7f7f7f'];
     // Index of the first day of each month on a leap-year calendar.
     const MONTH_STARTS = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
     const dayLabel = (i) => {
@@ -563,6 +570,45 @@
       });
     }
     applySmoothing();
+  }
+
+  // Average daily solar production by month, one line per year; the newest two are shown.
+  const solarByMonth = {{ solarStats.byMonth | dump | safe }};
+  const solarMonthCanvas = document.getElementById('solar-month-chart');
+  if (solarMonthCanvas) {
+    new Chart(solarMonthCanvas, {
+      type: 'line',
+      data: {
+        labels: MONTH_ABBR,
+        datasets: solarByMonth.map((series, i) => ({
+          label: series.year,
+          data: series.kwhPerDay,
+          borderColor: YEAR_COLORS[i % YEAR_COLORS.length],
+          backgroundColor: YEAR_COLORS[i % YEAR_COLORS.length],
+          borderWidth: i === 0 ? 2 : 1.5,
+          pointRadius: 3,
+          hidden: i > 1,
+        })),
+      },
+      options: {
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const days = solarByMonth[ctx.datasetIndex].days[ctx.dataIndex];
+                const full = new Date(Date.UTC(Number(ctx.dataset.label), ctx.dataIndex + 1, 0)).getUTCDate();
+                return `${ctx.dataset.label}: ${ctx.parsed.y === null ? 'no data'
+                  : ctx.parsed.y.toFixed(2) + ' kWh/day' + (days < full ? ` (${days} days)` : '')}`;
+              },
+            },
+          },
+        },
+        scales: {
+          y: { min: 0, title: { display: true, text: 'kWh per day' } },
+        },
+      },
+    });
   }
 
   makeUsageChart('gas-chart', periodLabels, periodFullLabels, gasThermsByPeriod, gasCostByPeriod, 'Usage (therms)', 'therms', false);

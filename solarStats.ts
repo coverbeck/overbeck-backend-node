@@ -60,6 +60,7 @@ export interface SolarStats {
   glitches: DayStat[]; // days left out of lowest/highest, oldest first
   sunlightFrom: string | null; // first day with station sunlight
   byDayOfYear: YearSeries[]; // newest first
+  byMonth: YearMonths[]; // newest first
 }
 
 // One year's daily production for the day-of-year chart: index 0 is Jan 1 and 365 is
@@ -68,6 +69,16 @@ export interface SolarStats {
 export interface YearSeries {
   year: string;
   kwh: Array<number | null>;
+}
+
+// One year's average daily production in each month, for the by-month chart: index 0
+// is January. Every day counts, as in the table's best and worst months, and a month
+// in progress or before the install is averaged over the days it has. Months with no
+// days are null.
+export interface YearMonths {
+  year: string;
+  kwhPerDay: Array<number | null>;
+  days: number[];
 }
 
 function dayOfYearIndex(date: string): number {
@@ -177,6 +188,21 @@ export function computeSolarStats(days: SolarDay[], sunByDate: Map<string, numbe
     return { year, kwh };
   });
 
+  const byMonth = [...byYear].reverse().map(([year, yearDays]) => {
+    const kwh: number[] = new Array(12).fill(0);
+    const counts: number[] = new Array(12).fill(0);
+    for (const day of yearDays) {
+      const month = Number(day.date.slice(5, 7)) - 1;
+      kwh[month] += day.kwh;
+      counts[month]++;
+    }
+    return {
+      year,
+      kwhPerDay: kwh.map((total, i) => (counts[i] ? Math.round((total / counts[i]) * 100) / 100 : null)),
+      days: counts,
+    };
+  });
+
   const sunDates = [...sunByDate.keys()].sort();
   return {
     years,
@@ -184,5 +210,6 @@ export function computeSolarStats(days: SolarDay[], sunByDate: Map<string, numbe
     glitches: sorted.filter(isGlitch),
     sunlightFrom: sunDates[0] ?? null,
     byDayOfYear,
+    byMonth,
   };
 }
