@@ -12,7 +12,7 @@ import { getOutlook, liveStationTemp } from '../outlook.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
-import { computePayback, estimateYearsFromBills, peakShareFromHourly } from '../solarPayback.ts';
+import { baselineKwhFor, computePayback, estimateYearsFromBills, peakShareFromHourly } from '../solarPayback.ts';
 import { AVERAGE_LABEL, computeSolarStats } from '../solarStats.ts';
 import type { SolarDay } from '../solarStats.ts';
 
@@ -270,6 +270,22 @@ function previousDay(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+function nextDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// The baseline allowance from `start` through `end`, inclusive: each day's own seasonal
+// amount, so a period crossing a season or rate change and periods of any length add up right.
+function baselineAllowance(start: string, end: string): number {
+  let total = 0;
+  for (let date = start; date <= end; date = nextDay(date)) {
+    total += baselineKwhFor(date);
+  }
+  return total;
+}
+
 function inWindow(date: string, window: PeriodWindow): boolean {
   return date >= window.windowStart && (window.windowEnd === null || date < window.windowEnd);
 }
@@ -337,14 +353,20 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     let exportKwh = 0;
     let electricCostSum = 0;
     let hasElectric = false;
+    let lastElectricDate: string | null = null;
     for (const row of electricDaily) {
       if (inWindow(row.usage_date, window)) {
         importKwh += row.import_kwh;
         exportKwh += row.export_kwh;
         electricCostSum += row.cost;
         hasElectric = true;
+        lastElectricDate = row.usage_date;
       }
     }
+    // The period in progress gets the allowance through its last day of electric data, to
+    // compare with its net usage so far.
+    const baselineEnd = window.windowEnd !== null ? previousDay(window.windowEnd) : lastElectricDate;
+    const baselineKwh = baselineEnd !== null ? baselineAllowance(window.windowStart, baselineEnd) : null;
 
     let therms = 0;
     let gasCostSum = 0;
@@ -379,6 +401,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
       // null (not 0) when this period has no solar data yet, distinguishing "not backfilled"
       // from "generated zero" — same convention as the daily solarKwhByDate lookup.
       solarKwh: hasSolar ? solarKwh : null,
+      baselineKwh,
       hasData: hasElectric || hasGas,
     };
   }).filter((row) => row.hasData);
@@ -486,6 +509,7 @@ router.get('/electric-usage', requireSession, (req: Request, res: Response) => {
     gasThermsByPeriod: periodRows.map((r) => r.therms),
     gasCostByPeriod: periodRows.map((r) => r.gasCost),
     solarKwhByPeriod: periodRows.map((r) => r.solarKwh),
+    baselineKwhByPeriod: periodRows.map((r) => r.baselineKwh),
     electricDailyDates: electricDaily.map((r) => r.usage_date),
     electricDailyImportKwh: electricDaily.map((r) => r.import_kwh),
     electricDailyExportKwh: electricDaily.map((r) => r.export_kwh),

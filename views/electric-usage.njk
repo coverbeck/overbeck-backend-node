@@ -215,6 +215,7 @@
   const electricExportByPeriod = {{ electricExportByPeriod | dump | safe }};
   const electricCostByPeriod = {{ electricCostByPeriod | dump | safe }};
   const solarKwhByPeriod = {{ solarKwhByPeriod | dump | safe }};
+  const baselineKwhByPeriod = {{ baselineKwhByPeriod | dump | safe }};
   const gasThermsByPeriod = {{ gasThermsByPeriod | dump | safe }};
   const gasCostByPeriod = {{ gasCostByPeriod | dump | safe }};
   const electricDailyDates = {{ electricDailyDates | dump | safe }};
@@ -229,6 +230,7 @@
   const NET_EXPORT_COLOR = '#59a14f';
   const SOLAR_COLOR = '#ffc107';
   const COST_COLOR = '#e63946';
+  const BASELINE_COLOR = '#6c757d';
   const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   function formatDayLabel(dateStr) {
@@ -245,8 +247,9 @@
   // needed for it. Raw import/export/cost detail moves into the tooltip so nothing is lost
   // relative to a two-bar view. Shared by the per-period, per-day, and per-hour charts; solarArr
   // is optional and, when given, overlays generation as a thin line for context only (not part
-  // of the net comparison itself).
-  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr, showTotalCostInTooltip) {
+  // of the net comparison itself). baselineArr, also optional, is PG&E's baseline allowance as
+  // a dashed line: the baseline credit applies to net usage up to it.
+  function makeNetUsageChart(canvasId, labels, fullLabels, importArr, exportArr, costArr, autoSkipTicks, onBarClick, tooltipTitleFn, solarArr, showTotalCostInTooltip, baselineArr) {
     const netArr = importArr.map((v, i) => v - exportArr[i]);
     return new Chart(document.getElementById(canvasId), {
       data: {
@@ -266,6 +269,16 @@
             yAxisID: 'y',
             borderColor: SOLAR_COLOR,
             backgroundColor: SOLAR_COLOR,
+          }] : []),
+          ...(baselineArr ? [{
+            type: 'line',
+            label: 'Baseline Allowance (kWh)',
+            data: baselineArr,
+            yAxisID: 'y',
+            borderColor: BASELINE_COLOR,
+            backgroundColor: BASELINE_COLOR,
+            borderDash: [6, 3],
+            pointRadius: 2,
           }] : []),
           {
             type: 'line',
@@ -308,6 +321,9 @@
               label: (ctx) => {
                 const datasetLabel = ctx.dataset.label;
                 if (datasetLabel === 'Cost ($)') return `Cost: $${ctx.parsed.y.toFixed(2)}`;
+                if (datasetLabel === 'Baseline Allowance (kWh)') {
+                  return ctx.parsed.y === null ? 'Baseline allowance: no data' : `Baseline allowance: ${ctx.parsed.y.toFixed(1)} kWh`;
+                }
                 if (datasetLabel === 'Solar Generation (kWh)') {
                   return ctx.parsed.y === null ? 'Solar generation: no data' : `Solar generation: ${ctx.parsed.y.toFixed(1)} kWh`;
                 }
@@ -395,7 +411,8 @@
     (i) => renderDailyChart(i),
     undefined,
     solarKwhByPeriod,
-    true
+    true,
+    baselineKwhByPeriod
   );
 
   function dailyDataForPeriod(index) {

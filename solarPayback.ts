@@ -80,7 +80,8 @@ function periodFor<T extends { from: string }>(periods: T[], date: string): T {
   return period;
 }
 
-function baselineKwhFor(date: string): number {
+// The baseline allowance for one day (territory T, basic service), in kWh.
+export function baselineKwhFor(date: string): number {
   const b = periodFor(RATE_HISTORY.baseline, date);
   const month = Number(date.slice(5, 7));
   const [first, last] = b.summerMonths;
