@@ -21,7 +21,8 @@
   every hour, alongside what the station actually recorded. Left of the dashed "now" line, each forecast line
   shows what the source predicted in advance for that hour; right of it, its forecast
   for the hours ahead. Darker shading marks night, lighter shading the twilight between
-  dawn and sunrise and between sunset and dusk.
+  dawn and sunrise and between sunset and dusk. The station's temperature line ends with
+  a dot at its live reading (its other readings are saved once an hour).
 </p>
 
 <div class="chart-options">
@@ -284,6 +285,12 @@
     return { label, data, borderColor: color, backgroundColor: color, pointRadius: 0, borderWidth: 2, ...extra };
   }
 
+  // The station's temperature line ends with its live reading, marked with a dot.
+  const stationTempStyle = {
+    borderWidth: 3,
+    pointRadius: (c) => (c.raw?.x === comparison.station.liveAt ? 3.5 : 0),
+  };
+
   // The average and our estimate are shown and drawn thicker; the individual
   // sources start hidden. The temperature chart starts with only our estimate.
   function forecastLine(forecast, label, data, extra = {}) {
@@ -406,7 +413,7 @@
       type: 'line',
       data: {
         datasets: [
-          line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
+          line('My station', comparison.station.temp, STATION_COLOR, stationTempStyle),
           // Only our estimate is shown at first; the average and sources are a click away.
           ...comparison.lines.map((f) => forecastLine(f, f.label, f.temp, { hidden: f.key !== 'estimate' })),
         ],
@@ -431,7 +438,7 @@
     function leadDatasets(key) {
       const forecast = comparison.leadComparison.find((f) => f.key === key);
       return [
-        line('My station', comparison.station.temp, STATION_COLOR, { borderWidth: 3 }),
+        line('My station', comparison.station.temp, STATION_COLOR, stationTempStyle),
         ...forecast.leads.map(({ lead, temp }) => {
           const style = LEAD_STYLES[lead];
           return line(`${forecast.label} ${style.label}`, temp, withAlpha(COLORS[key], style.alpha), {

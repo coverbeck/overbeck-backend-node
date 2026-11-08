@@ -67,14 +67,15 @@ router.get('/weather/forecast', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   const days = RANGE_DAYS.find((d) => d === Number(req.query.days)) ?? 1;
   const lead = LEAD_HOURS.find((h) => h === Number(req.query.lead)) ?? 0;
+  const live = await liveStationTemp();
   res.render('weather-forecast.njk', {
     activeTab: 'forecast',
     days,
     lead,
     rangeDays: RANGE_DAYS,
     leadHours: LEAD_HOURS,
-    comparison: getForecastComparison(new Date(), days, lead),
-    outlook: getOutlook(new Date(), await liveStationTemp()),
+    comparison: getForecastComparison(new Date(), days, lead, live),
+    outlook: getOutlook(new Date(), live),
   });
 });
 

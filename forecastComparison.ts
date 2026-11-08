@@ -1,6 +1,7 @@
 import db from './db/index.ts';
 import { fromSqliteUtc, startOfHour, toSqliteUtc } from './forecast.ts';
 import type { ForecastSource } from './forecast.ts';
+import type { TempAt } from './outlook.ts';
 import { sunEventsBetween } from './sun.ts';
 
 // Data for the /weather/forecast charts: the station's readings over the last few
@@ -127,7 +128,8 @@ export interface ForecastComparison {
   sun: SunBands;
   lastFetchedAt: string | null; // ISO
   station: {
-    temp: ChartPoint[];
+    temp: ChartPoint[]; // ends with the live reading, when there is one
+    liveAt: string | null; // ISO, the live reading's time
     dewpoint: ChartPoint[];
     spread: ChartPoint[];
     humidity: ChartPoint[];
@@ -468,7 +470,15 @@ function forecastLines(start: string, end: string, leadHours: LeadHours): Foreca
   return fetched.length ? [averageLine(fetched), ...sourceLines] : sourceLines;
 }
 
-export function getForecastComparison(now: Date, days: RangeDays, leadHours: LeadHours): ForecastComparison {
+// `live` is the station's live reading from Ambient. Saved readings arrive only
+// hourly (the :10 job), so it's added to the end of the station's temperature line
+// when it's newer than the last saved one, to match the outlook's current temperature.
+export function getForecastComparison(
+  now: Date,
+  days: RangeDays,
+  leadHours: LeadHours,
+  live: TempAt | null = null,
+): ForecastComparison {
   const startMs = startOfHour(now).getTime() - days * 24 * HOUR_MS;
   const endMs = startOfHour(now).getTime() + FORECAST_HOURS * HOUR_MS;
   const start = toSqliteUtc(new Date(startMs));
@@ -517,6 +527,12 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
 
   const stationSeries = (value: (row: StationRow) => number | null): ChartPoint[] =>
     stationRows.map((row) => ({ x: toIso(row.observed_at), y: value(row) }));
+  const stationTemp = stationSeries((row) => row.temp_f);
+  const lastSavedMs = stationTemp.length ? Date.parse(stationTemp[stationTemp.length - 1].x) : startMs;
+  const liveAt = live && Date.parse(live.at) > lastSavedMs && Date.parse(live.at) <= now.getTime() ? live.at : null;
+  if (live && liveAt) {
+    stationTemp.push({ x: liveAt, y: Math.round(live.tempF * 10) / 10 });
+  }
 
   return {
     now: now.toISOString(),
@@ -524,7 +540,8 @@ export function getForecastComparison(now: Date, days: RangeDays, leadHours: Lea
     sun: sunBands(startMs, endMs),
     lastFetchedAt: lastFetchedAt && toIso(lastFetchedAt),
     station: {
-      temp: stationSeries((row) => row.temp_f),
+      temp: stationTemp,
+      liveAt,
       dewpoint: stationSeries((row) => row.dewpoint_f),
       spread: stationSeries((row) => spread(row.temp_f, row.dewpoint_f)),
       humidity: stationSeries((row) => row.humidity_pct),

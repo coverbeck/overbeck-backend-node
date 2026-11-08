@@ -11,7 +11,8 @@
 // under way (live from Ambient, like the Current page, else the latest saved one;
 // the :10 job saves readings only hourly). Nights go on to the low and the temperature at 7 am (even when that's
 // after sunrise); days to the high and the temperature at sunset, then the wind.
-// Both give the chance of rain.
+// Both give the chance of rain, and then the conditions at any tennis or pickleball
+// game (GAMES) still to come in the period.
 
 import db from './db/index.ts';
 import { BASE_SOURCES } from './estimate.ts';
@@ -28,6 +29,15 @@ const CALM_MPH = 3;
 const RAIN_CHANCE_PCT = 20; // below this (and no measurable amount), "no rain expected"
 const RAIN_LIKELY_PCT = 60;
 const MEASURABLE_IN = 0.01;
+// Regular tennis and pickleball games, weather permitting, in Pacific time; weekday
+// 0 is Sunday. Rain is over the game's first PLAY_MS.
+const GAMES = [
+  { weekday: 2, hour: 10, minute: 30 },
+  { weekday: 4, hour: 11, minute: 30 },
+  { weekday: 6, hour: 10, minute: 0 },
+  { weekday: 0, hour: 10, minute: 0 },
+];
+const PLAY_MS = 2 * HOUR_MS;
 
 const pacificHourFormat = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
@@ -76,6 +86,17 @@ export interface OutlookRain {
   startsAt: string | null; // ISO; first hour with at least a RAIN_CHANCE_PCT chance
 }
 
+// The forecast at a game's start; temperature and wind are interpolated between the
+// hours on either side of a half-hour start.
+export interface OutlookGame {
+  at: string; // ISO
+  tempF: number;
+  windMph: number | null;
+  direction: string | null; // null when calm
+  gustMph: number | null;
+  rain: OutlookRain; // over the game
+}
+
 export interface OutlookPeriod {
   kind: 'day' | 'night';
   label: string; // "Today", "Tonight", "Tomorrow"
@@ -88,6 +109,7 @@ export interface OutlookPeriod {
   atSunset: TempAt | null; // days only: the last hour before sunset
   wind: OutlookWind | null; // days only
   rain: OutlookRain;
+  games: OutlookGame[];
   text: string;
 }
 
@@ -103,6 +125,10 @@ function pacificHour(ms: number): number {
 
 function pacificDate(ms: number): string {
   return pacificDateFormat.format(new Date(ms));
+}
+
+function pacificWeekday(ms: number): number {
+  return new Date(`${pacificDate(ms)}T12:00:00Z`).getUTCDay();
 }
 
 // "7 am", "2 pm", "noon", or "6:12 pm" off the hour.
@@ -180,11 +206,12 @@ function loadHours(now: Date): OutlookHour[] {
   });
 }
 
-// The station's live reading from Ambient, or null if the request fails.
+// The station's live reading from Ambient, unrounded (the forecast page also plots
+// it), or null if the request fails.
 export async function liveStationTemp(): Promise<TempAt | null> {
   try {
     const { outdoorTemp, date } = await getCurrentWeather();
-    return { tempF: Math.round(outdoorTemp), at: new Date(date).toISOString() };
+    return { tempF: outdoorTemp, at: new Date(date).toISOString() };
   } catch (err) {
     console.error(`Live station reading for the outlook failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -227,9 +254,7 @@ function windSummary(hours: OutlookHour[]): OutlookWind | null {
   return {
     minMph: Math.round(Math.min(...winds.map((h) => h.windMph))),
     maxMph: Math.round(strongest.windMph),
-    direction: strongest.windMph >= CALM_MPH && strongest.windDirDeg !== null
-      ? COMPASS[Math.round(strongest.windDirDeg / 45) % 8]
-      : null,
+    direction: direction(strongest.windMph, strongest.windDirDeg),
     strongestAt: new Date(strongest.at).toISOString(),
     gustMph: gusts.length ? Math.round(Math.max(...gusts)) : null,
   };
@@ -269,6 +294,61 @@ function windText(wind: OutlookWind): string {
   const speed = wind.minMph === wind.maxMph ? `at ${wind.maxMph} mph` : `at ${wind.minMph}–${wind.maxMph} mph`;
   const peak = wind.minMph === wind.maxMph ? '' : `, strongest around ${clockTime(Date.parse(wind.strongestAt))}`;
   return `Winds out of the ${wind.direction} ${speed}${peak}${gusts}.`;
+}
+
+function direction(mph: number, deg: number | null): string | null {
+  return mph >= CALM_MPH && deg !== null ? COMPASS[Math.round(deg / 45) % 8] : null;
+}
+
+// The games starting after now within (startMs, endMs).
+function gameForecasts(hours: OutlookHour[], startMs: number, endMs: number, nowMs: number): OutlookGame[] {
+  const games: OutlookGame[] = [];
+  for (const hour of hours) {
+    const game = GAMES.find((g) => g.weekday === pacificWeekday(hour.at) && g.hour === pacificHour(hour.at));
+    const at = game ? hour.at + game.minute * 60 * 1000 : null;
+    if (!game || at === null || at <= nowMs || at <= startMs || at >= endMs || hour.tempF === null) {
+      continue;
+    }
+    const next = hours.find((h) => h.at === hour.at + HOUR_MS);
+    const fraction = game.minute / 60;
+    const between = (pick: (h: OutlookHour) => number | null): number | null => {
+      const a = pick(hour);
+      const b = next ? pick(next) : null;
+      return a !== null && b !== null ? a + (b - a) * fraction : a;
+    };
+    const windMph = between((h) => h.windMph);
+    const gustMph = between((h) => h.gustMph);
+    games.push({
+      at: new Date(at).toISOString(),
+      tempF: Math.round(between((h) => h.tempF) ?? hour.tempF),
+      windMph: windMph !== null ? Math.round(windMph) : null,
+      direction: windMph !== null ? direction(windMph, hour.windDirDeg) : null,
+      gustMph: gustMph !== null ? Math.round(gustMph) : null,
+      rain: rainSummary(hours, at, at + PLAY_MS),
+    });
+  }
+  return games;
+}
+
+// "At game time, 10:30 am: 61°, winds out of the west at 6 mph gusting to 12 mph,
+// no rain expected."
+function gameText(game: OutlookGame): string {
+  const parts = [`${game.tempF}°`];
+  if (game.windMph !== null) {
+    const gusts = game.gustMph !== null && game.gustMph > game.windMph ? ` gusting to ${game.gustMph} mph` : '';
+    parts.push(game.direction
+      ? `winds out of the ${game.direction} at ${game.windMph} mph${gusts}`
+      : `light winds${gusts ? `,${gusts}` : ''}`);
+  }
+  const chance = game.rain.maxChancePct ?? 0;
+  const total = game.rain.totalIn ?? 0;
+  if (chance < RAIN_CHANCE_PCT && total < MEASURABLE_IN) {
+    parts.push('no rain expected');
+  } else {
+    const amount = total >= MEASURABLE_IN ? `, about ${total.toFixed(2)} inches` : '';
+    parts.push(`${chance >= RAIN_LIKELY_PCT ? 'rain likely' : 'a chance of rain'} (${chance}%)${amount}`);
+  }
+  return `At game time, ${clockTime(Date.parse(game.at))}: ${parts.join(', ')}.`;
 }
 
 function tempAt(hour: OutlookHour & { tempF: number }): TempAt {
@@ -383,7 +463,13 @@ function buildPeriod(
     atWake = wake ? tempAt(wake) : null;
     temperature += nightText(opening, low, atWake);
   }
-  const sentences = [`${temperature}.`, wind ? windText(wind) : '', rainText(rain, Math.max(startMs, nowMs))];
+  const games = gameForecasts(hours, startMs, endMs, nowMs);
+  const sentences = [
+    `${temperature}.`,
+    wind ? windText(wind) : '',
+    rainText(rain, Math.max(startMs, nowMs)),
+    ...games.map(gameText),
+  ];
   return {
     kind,
     label: periodLabel,
@@ -396,6 +482,7 @@ function buildPeriod(
     atSunset,
     wind,
     rain,
+    games,
     text: sentences.filter(Boolean).join(' '),
   };
 }
@@ -414,7 +501,9 @@ export function getOutlook(now: Date, live: TempAt | null = null): Outlook | nul
   const events = sunEventsBetween(nowMs - 24 * HOUR_MS, nowMs + 48 * HOUR_MS)
     .filter((e) => e.type === 'sunrise' || e.type === 'sunset');
   const currentIndex = events.filter((e) => e.at <= nowMs).length - 1;
-  const station = live && now.getTime() - Date.parse(live.at) <= CURRENT_MS ? live : savedStationTemp(now);
+  const station = live && now.getTime() - Date.parse(live.at) <= CURRENT_MS
+    ? { ...live, tempF: Math.round(live.tempF) }
+    : savedStationTemp(now);
   const periods: OutlookPeriod[] = [];
   for (let i = currentIndex; i < currentIndex + 3 && i + 1 < events.length && periods.length < 2; i++) {
     const kind = events[i].type === 'sunrise' ? 'day' : 'night';
