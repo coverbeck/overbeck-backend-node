@@ -9,6 +9,7 @@ import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS }
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
 import { getOutlook, liveStationReading } from '../outlook.ts';
+import { getRainHistory } from '../rainHistory.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
@@ -76,6 +77,7 @@ router.get('/weather/forecast', async (req: Request, res: Response) => {
     leadHours: LEAD_HOURS,
     comparison: getForecastComparison(new Date(), days, lead, live),
     outlook: getOutlook(new Date(), live),
+    rainHistory: getRainHistory(new Date()),
   });
 });
 

@@ -201,6 +201,52 @@
 </p>
 {% endif %}
 
+{% if rainHistory.dayCount %}
+<h3>Day-ahead rain forecasts since {{ rainHistory.since }}</h3>
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr><th>Forecast</th><th>Days</th><th>Rainy days</th><th>Caught</th><th>Missed</th><th>False alarms</th><th>Average error on rainy days</th><th>Typical miss on rainy days</th><th>Forecast total</th><th>Recorded total</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rainHistory.scores %}
+      <tr><td>{{ row.label }}</td><td>{{ row.days }}</td><td>{{ row.rainyDays }}</td><td>{{ row.caught }}</td><td>{{ row.missed }}</td><td>{{ row.falseAlarms }}</td><td>{{ row.rainyBias }}</td><td>{{ row.rainyMiss }}</td><td>{{ row.forecastTotal }}</td><td>{{ row.recordedTotal }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if rainHistory.days.length %}
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr><th>Day</th><th>My station</th>{% for column in rainHistory.columns %}<th>{{ column.label }}</th>{% endfor %}</tr>
+    </thead>
+    <tbody>
+      {% for day in rainHistory.days %}
+      <tr>
+        <td>{{ day.date }}</td>
+        <td>{{ day.stationIn.toFixed(2) }}</td>
+        {% for total in day.totals %}
+        <td>{% if total %}{{ total.inches.toFixed(2) }}{% if total.archived %}<span title="From Open-Meteo's day-ahead archive">†</span>{% endif %}{% else %}–{% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+<p class="hint">
+  Each whole day ({{ rainHistory.dayCount }} so far), midnight to midnight, scored
+  against the forecast as of 8 pm the evening before, which is what the outlook at the
+  top of the page says then. A day with at least 0.05 in counts as rainy. "Average error"
+  is the forecast minus what fell, so negative means too dry; "typical miss" ignores
+  the direction. Average is the outlook's: NWS, HRRR and NBM, without ECMWF. The second
+  table lists the days that were rainy at the station or in any forecast, newest first.
+  † marks a total from Open-Meteo's day-ahead archive (each hour as forecast about a day
+  before), used when no live forecast was saved that evening.
+</p>
+{% endif %}
+
 <p class="hint">
   Forecasts last fetched: <span class="local-time" data-iso="{{ comparison.lastFetchedAt }}"></span>
 </p>
