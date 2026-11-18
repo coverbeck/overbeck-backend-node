@@ -19,7 +19,7 @@
 
 import db from './db/index.ts';
 import { BASE_SOURCES } from './estimate.ts';
-import { fromSqliteUtc, nextPacificDayStart, pacificDate, pacificDayStart, startOfHour, toSqliteUtc } from './forecast.ts';
+import { errorMessage, fromSqliteUtc, nextPacificDayStart, pacificDate, pacificDayStart, startOfHour, toSqliteUtc } from './forecast.ts';
 import type { ForecastSource } from './forecast.ts';
 import { sunEventsBetween } from './sun.ts';
 import { getCurrentWeather } from './weather.ts';
@@ -234,7 +234,7 @@ export async function liveStationReading(): Promise<LiveReading | null> {
     const { outdoorTemp, dailyRain, date } = await getCurrentWeather();
     return { tempF: outdoorTemp, rainTodayIn: dailyRain ?? null, at: new Date(date).toISOString() };
   } catch (err) {
-    console.error(`Live station reading for the outlook failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`Live station reading for the outlook failed: ${errorMessage(err)}`);
     return null;
   }
 }

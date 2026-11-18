@@ -14,7 +14,7 @@ import { parseArgs } from 'node:util';
 import db from '../db/index.ts';
 import { getStationHistory, getStationMac } from '../weather.ts';
 import type { StationReading } from '../weather.ts';
-import { fromSqliteUtc, toSqliteUtc } from '../forecast.ts';
+import { errorMessage, fromSqliteUtc, toSqliteUtc } from '../forecast.ts';
 
 const JOB_NAME = 'backyard-station';
 
@@ -25,10 +25,6 @@ const STEP_MS = 23 * 3600 * 1000;
 
 function log(message: string): void {
   console.log(`${new Date().toISOString()} ${message}`);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 const insertReading = db.prepare(`

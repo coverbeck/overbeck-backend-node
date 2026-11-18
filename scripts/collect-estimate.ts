@@ -15,17 +15,13 @@ import {
   loadStationTemps,
 } from '../estimate.ts';
 import type { Correction } from '../estimate.ts';
-import { startOfHour, toSqliteUtc } from '../forecast.ts';
+import { errorMessage, startOfHour, toSqliteUtc } from '../forecast.ts';
 
 const JOB_NAME = 'backyard-estimate';
 const HOUR_MS = 3600 * 1000;
 
 function log(message: string): void {
   console.log(`${new Date().toISOString()} ${message}`);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function signed(value: number): string {

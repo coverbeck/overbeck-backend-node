@@ -8,7 +8,7 @@
 import db from '../db/index.ts';
 import { getNwsForecast } from '../nws.ts';
 import { getOpenMeteoForecasts } from '../openmeteo.ts';
-import { toSqliteUtc } from '../forecast.ts';
+import { errorMessage, toSqliteUtc } from '../forecast.ts';
 import type { Forecast, ForecastSource } from '../forecast.ts';
 
 const JOB_NAME = 'backyard-forecasts';
@@ -17,10 +17,6 @@ const EXPECTED_SOURCES: ForecastSource[] = ['nws', 'om_hrrr', 'om_nbm', 'om_ecmw
 
 function log(message: string): void {
   console.log(`${new Date().toISOString()} ${message}`);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 const insertSnapshot = db.prepare(

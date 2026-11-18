@@ -14,7 +14,7 @@
 import { parseArgs } from 'node:util';
 import db from '../db/index.ts';
 import { ARCHIVE_START_DATE, getOpenMeteoArchive } from '../openmeteo.ts';
-import { fromSqliteUtc, startOfHour, toSqliteUtc } from '../forecast.ts';
+import { errorMessage, fromSqliteUtc, startOfHour, toSqliteUtc } from '../forecast.ts';
 import type { Forecast } from '../forecast.ts';
 
 const JOB_NAME = 'backyard-forecast-archive';
@@ -24,10 +24,6 @@ const PAUSE_MS = 1000; // between requests, to go easy on a free API
 
 function log(message: string): void {
   console.log(`${new Date().toISOString()} ${message}`);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function startOfUtcDay(ms: number): number {

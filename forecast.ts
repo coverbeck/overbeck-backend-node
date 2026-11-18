@@ -76,6 +76,21 @@ export function forecastWindow(now: Date, hoursAhead: number): { start: number; 
 
 const RETRY_DELAYS_MS = [2000, 5000, 15000];
 
+// An error's message with its causes', for logs and job check-ins. Node's fetch
+// reports every network failure as just "fetch failed", with what went wrong (a
+// timeout, DNS, a refused connection) in its cause, e.g. "fetch failed (Connect
+// Timeout Error (attempted address: api.open-meteo.com:443, timeout: 10000ms))".
+export function errorMessage(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const code = 'code' in err && typeof err.code === 'string' && !err.message.includes(err.code) ? `${err.code} ` : '';
+  const causes = err instanceof AggregateError ? err.errors : err.cause === undefined ? [] : [err.cause];
+  const own = `${code}${err.message}`.trim();
+  const details = causes.map(errorMessage).join('; ');
+  return details ? `${own} (${details})` : own;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
