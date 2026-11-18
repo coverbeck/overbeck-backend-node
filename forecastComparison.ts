@@ -1,7 +1,8 @@
 import db from './db/index.ts';
-import { fromSqliteUtc, startOfHour, toSqliteUtc } from './forecast.ts';
+import { fromSqliteUtc, nextPacificDayStart, pacificDate, pacificDayStart, startOfHour, toSqliteUtc } from './forecast.ts';
 import type { ForecastSource } from './forecast.ts';
-import type { TempAt } from './outlook.ts';
+import { stationRainToday } from './outlook.ts';
+import type { LiveReading } from './outlook.ts';
 import { sunEventsBetween } from './sun.ts';
 
 // Data for the /weather/forecast charts: the station's readings over the last few
@@ -96,6 +97,30 @@ export interface RainSummary {
   maxChancePct: number | null;
 }
 
+// One forecast's rain over a calendar day. Hours is how many of the day's hours it
+// covers; fewer than the day's length means a partial total.
+export interface DayRainTotal {
+  inches: number;
+  hours: number;
+}
+
+// Rain over yesterday, today and tomorrow, midnight to midnight Pacific: what the
+// station recorded (today: so far) and each forecast's total for the whole day, using
+// the full fetched forecast rather than the charts' 18 hours. Past hours use the
+// forecast made just before them.
+export interface RainDay {
+  label: 'Yesterday' | 'Today' | 'Tomorrow';
+  date: string; // YYYY-MM-DD
+  dayHours: number; // 23 to 25
+  stationIn: number | null; // null for tomorrow, or without readings
+  totals: (DayRainTotal | null)[]; // one per RainByDay column
+}
+
+export interface RainByDay {
+  columns: { key: LineKey; label: string }[]; // the average, then each source
+  days: RainDay[];
+}
+
 export interface TimeRange {
   start: string; // ISO
   end: string; // ISO
@@ -139,6 +164,7 @@ export interface ForecastComparison {
   scores: ScoreRow[]; // best temperature first
   rain: RainSummary;
   rainScores: RainScoreRow[]; // fewest missed and false-alarm hours first
+  rainByDay: RainByDay;
   fogSpreadF: number;
   leadComparison: LeadComparison[]; // the average, then SOURCE_ORDER
 }
@@ -470,6 +496,49 @@ function forecastLines(start: string, end: string, leadHours: LeadHours): Foreca
   return fetched.length ? [averageLine(fetched), ...sourceLines] : sourceLines;
 }
 
+// Yesterday's, today's and tomorrow's rain (see RainDay).
+function rainByDay(nowMs: number, live: LiveReading | null): RainByDay {
+  const starts = [pacificDayStart(nowMs - 24 * HOUR_MS), pacificDayStart(nowMs)];
+  starts.push(nextPacificDayStart(starts[1]), nextPacificDayStart(nextPacificDayStart(starts[1])));
+  // Rain hours end at valid_at, so a day's hours are those ending after its midnight
+  // through the next.
+  const lines = forecastLines(
+    toSqliteUtc(new Date(starts[0] + HOUR_MS)),
+    toSqliteUtc(new Date(starts[3] + HOUR_MS)),
+    0,
+  ).filter((line) => line.rain.length);
+  const columns = lines.map(({ key, label }) => ({ key, label }));
+
+  const yesterday = db.prepare(`
+    SELECT MAX(rain_daily_in) AS total FROM station_readings WHERE observed_at > ? AND observed_at <= ?
+  `).get(toSqliteUtc(new Date(starts[0])), toSqliteUtc(new Date(starts[1]))) as { total: number | null };
+  const stationIn = [yesterday.total, stationRainToday(starts[1], nowMs, live), null];
+
+  const labels = ['Yesterday', 'Today', 'Tomorrow'] as const;
+  const days = labels.map((label, i) => {
+    const [dayStart, dayEnd] = [starts[i], starts[i + 1]];
+    const totals = lines.map((line) => {
+      const values = line.rain
+        .filter((p) => {
+          const hourEnd = Date.parse(p.x) + HOUR_MS / 2;
+          return hourEnd > dayStart && hourEnd <= dayEnd;
+        })
+        .flatMap((p) => (p.y === null ? [] : [p.y]));
+      return values.length
+        ? { inches: Math.round(values.reduce((sum, y) => sum + y, 0) * 100) / 100, hours: values.length }
+        : null;
+    });
+    return {
+      label,
+      date: pacificDate(dayStart),
+      dayHours: Math.round((dayEnd - dayStart) / HOUR_MS),
+      stationIn: stationIn[i],
+      totals,
+    };
+  });
+  return { columns, days };
+}
+
 // `live` is the station's live reading from Ambient. Saved readings arrive only
 // hourly (the :10 job), so it's added to the end of the station's temperature line
 // when it's newer than the last saved one, to match the outlook's current temperature.
@@ -477,7 +546,7 @@ export function getForecastComparison(
   now: Date,
   days: RangeDays,
   leadHours: LeadHours,
-  live: TempAt | null = null,
+  live: LiveReading | null = null,
 ): ForecastComparison {
   const startMs = startOfHour(now).getTime() - days * 24 * HOUR_MS;
   const endMs = startOfHour(now).getTime() + FORECAST_HOURS * HOUR_MS;
@@ -551,6 +620,7 @@ export function getForecastComparison(
     scores,
     rain,
     rainScores: rain.show ? rainScoreRows(lines, stationRain) : [],
+    rainByDay: rainByDay(now.getTime(), live),
     fogSpreadF: FOG_SPREAD_F,
     leadComparison,
   };

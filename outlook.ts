@@ -12,11 +12,14 @@
 // the :10 job saves readings only hourly). Nights go on to the low and the temperature at 7 am (even when that's
 // after sunrise); days to the high and the temperature at sunset, then the wind.
 // Both give the chance of rain, and then the conditions at any tennis or pickleball
-// game (GAMES) still to come in the period.
+// game (GAMES) still to come in the period. When rain is expected, a last sentence
+// gives the whole calendar day's total (today's, or tomorrow's after sunset), with
+// ECMWF's when it differs a lot: the average leaves ECMWF out, and it can run far
+// wetter or drier than the others.
 
 import db from './db/index.ts';
 import { BASE_SOURCES } from './estimate.ts';
-import { fromSqliteUtc, startOfHour, toSqliteUtc } from './forecast.ts';
+import { fromSqliteUtc, nextPacificDayStart, pacificDate, pacificDayStart, startOfHour, toSqliteUtc } from './forecast.ts';
 import type { ForecastSource } from './forecast.ts';
 import { sunEventsBetween } from './sun.ts';
 import { getCurrentWeather } from './weather.ts';
@@ -38,13 +41,16 @@ const GAMES = [
   { weekday: 0, hour: 10, minute: 0 },
 ];
 const PLAY_MS = 2 * HOUR_MS;
+// ECMWF's day total is mentioned when it's this far from the average, both in inches
+// and as a ratio.
+const ECMWF_GAP_IN = 0.25;
+const ECMWF_GAP_RATIO = 1.5;
 
 const pacificHourFormat = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
   hour: 'numeric',
   hourCycle: 'h23',
 });
-const pacificDateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' });
 const pacificTimeFormat = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
   hour: 'numeric',
@@ -61,11 +67,17 @@ interface OutlookHour {
   gustMph: number | null;
   precipProbPct: number | null;
   precipIn: number | null; // in the hour ending at `at`
+  ecmwfPrecipIn: number | null; // not in the average
 }
 
 export interface TempAt {
   tempF: number;
   at: string; // ISO
+}
+
+// The station's live reading, with its rain since midnight.
+export interface LiveReading extends TempAt {
+  rainTodayIn: number | null;
 }
 
 export interface Opening extends TempAt {
@@ -113,18 +125,26 @@ export interface OutlookPeriod {
   text: string;
 }
 
+// Rain over one calendar day, midnight to midnight: for today, what the station has
+// recorded so far plus what's expected in the rest of the day.
+export interface DayRain {
+  label: 'Today' | 'Tomorrow';
+  date: string; // YYYY-MM-DD
+  soFarIn: number | null; // today only
+  expectedIn: number;
+  ecmwfIn: number | null; // ECMWF's expected amount, when it covers the whole day
+  text: string; // empty when no rain is expected
+}
+
 export interface Outlook {
   madeAt: string; // ISO
   periods: OutlookPeriod[];
+  dayRain: DayRain | null;
   text: string; // every period's text, for reading aloud
 }
 
 function pacificHour(ms: number): number {
   return Number(pacificHourFormat.format(new Date(ms)));
-}
-
-function pacificDate(ms: number): string {
-  return pacificDateFormat.format(new Date(ms));
 }
 
 function pacificWeekday(ms: number): number {
@@ -168,10 +188,10 @@ interface HourRow {
 }
 
 // The hours from the current one on: each base source's latest live forecast,
-// averaged, with our estimate's temperature where it has one.
+// averaged, with our estimate's temperature where it has one and ECMWF's rain.
 function loadHours(now: Date): OutlookHour[] {
   const since = toSqliteUtc(new Date(now.getTime() - STALE_MS));
-  const sources: ForecastSource[] = [...BASE_SOURCES, 'estimate'];
+  const sources: ForecastSource[] = [...BASE_SOURCES, 'om_ecmwf', 'estimate'];
   const rows = db.prepare(`
     SELECT s.source, h.valid_at, h.temp_f, h.wind_mph, h.wind_dir_deg, h.gust_mph,
       h.precip_prob_pct, h.precip_in
@@ -190,7 +210,7 @@ function loadHours(now: Date): OutlookHour[] {
     byHour.set(row.valid_at, [...(byHour.get(row.valid_at) ?? []), row]);
   }
   return [...byHour].map(([validAt, hourRows]) => {
-    const base = hourRows.filter((r) => r.source !== 'estimate');
+    const base = hourRows.filter((r) => BASE_SOURCES.includes(r.source));
     const estimate = hourRows.find((r) => r.source === 'estimate')?.temp_f ?? null;
     const winds = base.flatMap((r) => r.wind_mph !== null && r.wind_dir_deg !== null
       ? [{ mph: r.wind_mph, deg: r.wind_dir_deg }] : []);
@@ -202,16 +222,17 @@ function loadHours(now: Date): OutlookHour[] {
       gustMph: average(present(base.map((r) => r.gust_mph))),
       precipProbPct: average(present(base.map((r) => r.precip_prob_pct))),
       precipIn: average(present(base.map((r) => r.precip_in))),
+      ecmwfPrecipIn: hourRows.find((r) => r.source === 'om_ecmwf')?.precip_in ?? null,
     };
   });
 }
 
 // The station's live reading from Ambient, unrounded (the forecast page also plots
 // it), or null if the request fails.
-export async function liveStationTemp(): Promise<TempAt | null> {
+export async function liveStationReading(): Promise<LiveReading | null> {
   try {
-    const { outdoorTemp, date } = await getCurrentWeather();
-    return { tempF: outdoorTemp, at: new Date(date).toISOString() };
+    const { outdoorTemp, dailyRain, date } = await getCurrentWeather();
+    return { tempF: outdoorTemp, rainTodayIn: dailyRain ?? null, at: new Date(date).toISOString() };
   } catch (err) {
     console.error(`Live station reading for the outlook failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -330,7 +351,7 @@ function gameForecasts(hours: OutlookHour[], startMs: number, endMs: number, now
   return games;
 }
 
-// "At game time, 10:30 am: 61°, winds out of the west at 6 mph gusting to 12 mph,
+// "At 10:30 am: 61°, winds out of the west at 6 mph gusting to 12 mph,
 // no rain expected."
 function gameText(game: OutlookGame): string {
   const parts = [`${game.tempF}°`];
@@ -348,7 +369,7 @@ function gameText(game: OutlookGame): string {
     const amount = total >= MEASURABLE_IN ? `, about ${total.toFixed(2)} inches` : '';
     parts.push(`${chance >= RAIN_LIKELY_PCT ? 'rain likely' : 'a chance of rain'} (${chance}%)${amount}`);
   }
-  return `At game time, ${clockTime(Date.parse(game.at))}: ${parts.join(', ')}.`;
+  return `At ${clockTime(Date.parse(game.at))}: ${parts.join(', ')}.`;
 }
 
 function tempAt(hour: OutlookHour & { tempF: number }): TempAt {
@@ -487,9 +508,82 @@ function buildPeriod(
   };
 }
 
+// Rain the station has recorded since midnight: the live reading's when it's current,
+// else the latest saved reading's.
+export function stationRainToday(dayStart: number, nowMs: number, live: LiveReading | null): number | null {
+  if (live && live.rainTodayIn !== null && Date.parse(live.at) > dayStart && nowMs - Date.parse(live.at) <= CURRENT_MS) {
+    return live.rainTodayIn;
+  }
+  const row = db.prepare(`
+    SELECT rain_daily_in FROM station_readings
+    WHERE rain_daily_in IS NOT NULL AND observed_at > ? AND observed_at <= ?
+    ORDER BY observed_at DESC LIMIT 1
+  `).get(toSqliteUtc(new Date(dayStart)), toSqliteUtc(new Date(nowMs))) as { rain_daily_in: number } | undefined;
+  return row ? row.rain_daily_in : null;
+}
+
+// Rain expected from now to the end of the day: each hour's amount is for the hour
+// before it, so the current hour counts only for the part still to come. Null unless
+// the forecast reaches the day's last hour.
+function rainExpected(hours: OutlookHour[], fromMs: number, dayEnd: number, pick: (h: OutlookHour) => number | null): number | null {
+  const inDay = hours.filter((h) => h.at > fromMs && h.at <= dayEnd && pick(h) !== null);
+  if (!inDay.length || inDay[inDay.length - 1].at < dayEnd) {
+    return null;
+  }
+  return inDay.reduce((sum, h) => sum + (pick(h) as number) * Math.min(1, (h.at - fromMs) / HOUR_MS), 0);
+}
+
+function inches(value: number): string {
+  return `${value.toFixed(2)} inches`;
+}
+
+// Today's rain during the day, tomorrow's after sunset (before midnight). E.g. "Rain
+// today, midnight to midnight: 0.40 inches so far, about 1.20 more expected, though
+// ECMWF says 2.10 more."
+function dayRain(hours: OutlookHour[], nowMs: number, kind: 'day' | 'night', live: LiveReading | null): DayRain | null {
+  const tomorrow = kind === 'night' && pacificHour(nowMs) >= 12;
+  const todayStart = pacificDayStart(nowMs);
+  const dayStart = tomorrow ? nextPacificDayStart(todayStart) : todayStart;
+  const dayEnd = nextPacificDayStart(dayStart);
+  const fromMs = Math.max(dayStart, nowMs);
+  const expected = rainExpected(hours, fromMs, dayEnd, (h) => h.precipIn);
+  if (expected === null) {
+    return null;
+  }
+  const ecmwf = rainExpected(hours, fromMs, dayEnd, (h) => h.ecmwfPrecipIn);
+  const soFar = tomorrow ? null : stationRainToday(dayStart, nowMs, live);
+  const label = tomorrow ? 'Tomorrow' : 'Today';
+
+  const ecmwfDiffers = ecmwf !== null && Math.abs(ecmwf - expected) >= ECMWF_GAP_IN
+    && (ecmwf >= expected * ECMWF_GAP_RATIO || ecmwf * ECMWF_GAP_RATIO <= expected);
+  const raining = expected >= MEASURABLE_IN || ecmwfDiffers;
+  const recorded = soFar !== null && soFar >= MEASURABLE_IN;
+  let text = '';
+  if (raining || recorded) {
+    const more = recorded ? ' more' : '';
+    const ahead = !raining
+      ? 'with no more expected'
+      : expected < MEASURABLE_IN ? 'little or none expected'
+      : recorded ? `about ${expected.toFixed(2)} more expected` : `about ${inches(expected)}`;
+    const note = ecmwfDiffers && ecmwf !== null ? `, though ECMWF says ${inches(ecmwf)}${more}` : '';
+    const opening = `Rain ${label.toLowerCase()}, midnight to midnight:`;
+    text = recorded
+      ? `${opening} ${inches(soFar)} so far, ${ahead}${note}.`
+      : `${opening} ${ahead}${note}.`;
+  }
+  return {
+    label,
+    date: pacificDate(dayStart),
+    soFarIn: soFar,
+    expectedIn: Math.round(expected * 100) / 100,
+    ecmwfIn: ecmwf === null ? null : Math.round(ecmwf * 100) / 100,
+    text,
+  };
+}
+
 // The current period and the next, or null when there's no recent forecast.
 // `live` is the station's live reading, used when it's recent enough to call current.
-export function getOutlook(now: Date, live: TempAt | null = null): Outlook | null {
+export function getOutlook(now: Date, live: LiveReading | null = null): Outlook | null {
   const nowMs = now.getTime();
   const hours = loadHours(now);
   if (!hours.length) {
@@ -517,9 +611,11 @@ export function getOutlook(now: Date, live: TempAt | null = null): Outlook | nul
   if (!periods.length) {
     return null;
   }
+  const rain = dayRain(hours, nowMs, periods[0].kind, live);
   return {
     madeAt: now.toISOString(),
     periods,
-    text: periods.map((p) => p.text).join(' '),
+    dayRain: rain,
+    text: [...periods.map((p) => p.text), rain?.text ?? ''].filter(Boolean).join(' '),
   };
 }

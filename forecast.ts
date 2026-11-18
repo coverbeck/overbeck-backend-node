@@ -42,6 +42,30 @@ export function startOfHour(date: Date): Date {
   return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS);
 }
 
+const pacificDateFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' });
+
+// The Pacific calendar date, 'YYYY-MM-DD'.
+export function pacificDate(ms: number): string {
+  return pacificDateFormat.format(new Date(ms));
+}
+
+// Midnight Pacific at the start of the day containing ms.
+export function pacificDayStart(ms: number): number {
+  const date = pacificDate(ms);
+  for (const offset of ['-08:00', '-07:00']) {
+    const candidate = Date.parse(`${date}T00:00:00${offset}`);
+    if (pacificDate(candidate) === date && pacificDate(candidate - 1) !== date) {
+      return candidate;
+    }
+  }
+  throw new Error(`No Pacific midnight found for ${date}`);
+}
+
+// Midnight Pacific at the start of the next day (days run 23 to 25 hours).
+export function nextPacificDayStart(dayStart: number): number {
+  return pacificDayStart(dayStart + 25.5 * HOUR_MS);
+}
+
 // The window of forecast hours to keep: from the start of the current hour, for
 // hoursAhead hours. Includes the current hour, which the tonight endpoint compares
 // against the station's current reading.

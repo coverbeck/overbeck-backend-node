@@ -134,8 +134,9 @@
 </div>
 <p class="hint">
   Bars are the rain my station recorded in each hour; solid lines are each forecast's
-  amount for the hour, dashed lines its chance of rain (right-hand scale). Hovering
-  over an hour shows the hour it starts at. NWS gives amounts for blocks of about six
+  amount for the hour, dashed lines its chance of rain (right-hand scale). An amount is
+  the total for that hour, not a rate, and hovering shows which hour, e.g. "7–8 am".
+  For how much will fall over a whole day, see Rain by day below. NWS gives amounts for blocks of about six
   hours, spread evenly over them here, and HRRR's chance of rain is left out, since
   Open-Meteo copies it from NBM. Forecast amounts were first saved on Oct 20, 2026.
 </p>
@@ -166,6 +167,37 @@
 <p>
   No rain recorded or forecast for these days{% if comparison.rain.maxChancePct %} (the
   highest chance of rain forecast was {{ comparison.rain.maxChancePct | round }}%){% endif %}.
+</p>
+{% endif %}
+
+{% if comparison.rainByDay.columns.length %}
+<h3>Rain by day</h3>
+<div class="table-scroll">
+  <table class="data-table">
+    <thead>
+      <tr><th>Day</th><th>My station</th>{% for column in comparison.rainByDay.columns %}<th>{{ column.label }}</th>{% endfor %}</tr>
+    </thead>
+    <tbody>
+      {% for day in comparison.rainByDay.days %}
+      <tr>
+        <td>{{ day.label }}</td>
+        <td>{% if day.stationIn !== null %}{{ day.stationIn.toFixed(2) }}{% if day.label == 'Today' %} so far{% endif %}{% else %}–{% endif %}</td>
+        {% for total in day.totals %}
+        <td>{% if total %}{{ total.inches.toFixed(2) }}{% if total.hours < day.dayHours %}<span title="Covers {{ total.hours }} of the day's {{ day.dayHours }} hours">*</span>{% endif %}{% else %}–{% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="hint">
+  Inches of rain over each whole day, midnight to midnight, using each forecast's full
+  36 hours rather than the chart's 18. For past hours a forecast's amount is the one it
+  gave just before the hour, so yesterday shows how the forecasts compared with what
+  fell. * marks a partial total: the forecast doesn't cover the whole day, usually
+  because tomorrow runs past the end of it. The average here includes ECMWF; the
+  outlook's day total at the top of the page averages only NWS, HRRR and NBM, and
+  mentions ECMWF when it's much wetter or drier.
 </p>
 {% endif %}
 
@@ -562,6 +594,20 @@
         max: 100,
         title: { display: true, text: 'Chance of rain (%)' },
         grid: { drawOnChartArea: false },
+      };
+      // Rain points sit at the middle of their hour; the title names the whole hour.
+      rainOptions.plugins.tooltip.callbacks.title = (items) => {
+        if (!items.length) {
+          return '';
+        }
+        const mid = Date.parse(items[0].raw.x);
+        const start = new Date(mid - HOUR_MS / 2);
+        const end = new Date(mid + HOUR_MS / 2);
+        const hour = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric' }).toLowerCase();
+        const [startText, endText] = [hour(start), hour(end)];
+        const sameHalf = startText.slice(-2) === endText.slice(-2);
+        const weekday = start.toLocaleDateString('en-US', { weekday: 'short' });
+        return `${weekday} ${sameHalf ? startText.slice(0, -3) : startText}–${endText}`;
       };
       rainOptions.plugins.tooltip.callbacks.label = ({ dataset, raw }) =>
         dataset.yAxisID === 'y2'

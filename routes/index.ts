@@ -8,7 +8,7 @@ import db from '../db/index.ts';
 import { getCurrentWeather, getPublicStationReading, REFERENCE_STATIONS, PARKS } from '../weather.ts';
 import type { WeatherReading, PublicStationReading } from '../weather.ts';
 import { getForecastComparison, LEAD_HOURS, RANGE_DAYS } from '../forecastComparison.ts';
-import { getOutlook, liveStationTemp } from '../outlook.ts';
+import { getOutlook, liveStationReading } from '../outlook.ts';
 import { requireAuth } from '../middleware/auth.ts';
 import { requireSession, setSessionCookie, verifyLogin } from '../middleware/session.ts';
 import { computeNemYears, computeSolarSavings, RATES_EFFECTIVE_FROM, SOLAR_COMPLETE_INTERVALS } from '../solarSavings.ts';
@@ -67,7 +67,7 @@ router.get('/weather/forecast', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   const days = RANGE_DAYS.find((d) => d === Number(req.query.days)) ?? 1;
   const lead = LEAD_HOURS.find((h) => h === Number(req.query.lead)) ?? 0;
-  const live = await liveStationTemp();
+  const live = await liveStationReading();
   res.render('weather-forecast.njk', {
     activeTab: 'forecast',
     days,
@@ -83,7 +83,7 @@ router.get('/weather/forecast', async (req: Request, res: Response) => {
 // aloud. Public, like the page; it has no coordinates.
 router.get('/api/weather/outlook', async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
-  const outlook = getOutlook(new Date(), await liveStationTemp());
+  const outlook = getOutlook(new Date(), await liveStationReading());
   if (!outlook) {
     res.status(503).json({ error: 'No recent forecast' });
     return;
