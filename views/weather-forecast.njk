@@ -136,6 +136,8 @@
   Bars are the rain my station recorded in each hour; solid lines are each forecast's
   amount for the hour, dashed lines its chance of rain (right-hand scale). An amount is
   the total for that hour, not a rate, and hovering shows which hour, e.g. "7–8 am".
+  Lighter bars are hours when my station was briefly offline: the rain it counted
+  over the outage is spread evenly across it.
   For how much will fall over a whole day, see Rain by day below. NWS gives amounts for blocks of about six
   hours, spread evenly over them here, and HRRR's chance of rain is left out, since
   Open-Meteo copies it from NBM. Forecast amounts were first saved on Oct 20, 2026.
@@ -658,7 +660,7 @@
       rainOptions.plugins.tooltip.callbacks.label = ({ dataset, raw }) =>
         dataset.yAxisID === 'y2'
           ? `${dataset.label}: ${Math.round(raw.y)}%`
-          : `${dataset.label}: ${raw.y.toFixed(2)} in`;
+          : `${dataset.label}: ${raw.y.toFixed(2)} in${raw.estimated ? ' (estimated: station offline)' : ''}`;
       charts.push(new Chart(rainCanvas, {
         type: 'line',
         data: {
@@ -667,7 +669,8 @@
               type: 'bar',
               label: 'My station',
               data: comparison.station.rain,
-              backgroundColor: STATION_COLOR,
+              // Hours partly filled in over an outage are lighter.
+              backgroundColor: (ctx) => (ctx.raw?.estimated ? 'rgba(32, 32, 32, 0.3)' : STATION_COLOR),
               barPercentage: 1,
               categoryPercentage: 0.9,
             },

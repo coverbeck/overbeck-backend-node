@@ -26,6 +26,10 @@ const WET_IN = 0.01;
 // The rain chart shows when rain was recorded, some forecast has rain, or some
 // forecast gives at least this chance of it.
 const SHOW_CHANCE_PCT = 20;
+// Station readings come every 5 minutes; further apart than this is a gap. Rain over
+// a gap up to MAX_FILL_MS is filled in (see hourlyStationRain); a longer one stays empty.
+const READING_GAP_MS = 15 * 60 * 1000;
+const MAX_FILL_MS = 4 * HOUR_MS;
 
 export const RANGE_DAYS = [1, 3, 7] as const;
 export const LEAD_HOURS = [0, 6, 12, 24] as const;
@@ -48,6 +52,10 @@ export type LineKey = ForecastSource | 'average';
 export interface ChartPoint {
   x: string;
   y: number | null;
+}
+
+export interface RainPoint extends ChartPoint {
+  estimated: boolean; // partly filled in over a gap in the station's readings
 }
 
 export interface ForecastLine {
@@ -158,7 +166,7 @@ export interface ForecastComparison {
     dewpoint: ChartPoint[];
     spread: ChartPoint[];
     humidity: ChartPoint[];
-    rain: ChartPoint[]; // inches in each past hour, at the middle of the hour
+    rain: RainPoint[]; // inches in each past hour, at the middle of the hour
   };
   lines: ForecastLine[]; // the average first, then our estimate, then each source
   scores: ScoreRow[]; // best temperature first
@@ -335,41 +343,80 @@ function scoreRows(lines: ForecastLine[], stationRows: StationRow[], nowMs: numb
     }));
 }
 
-// Rain in each complete hour through nowMs, keyed by the hour's end. From the
-// day's running total where the station reported it for the hour and the reading
-// before it (the total resets at local midnight), else from the average rain rate
-// over the hour's readings, the only option for readings before 2026-10-20.
-function hourlyStationRain(rows: RainRow[], nowMs: number): Map<number, number> {
-  const byHour = new Map<number, RainRow[]>();
-  for (const row of rows) {
-    const hourEnd = Math.ceil(fromSqliteUtc(row.observed_at).getTime() / HOUR_MS) * HOUR_MS;
-    byHour.set(hourEnd, [...(byHour.get(hourEnd) ?? []), row]);
-  }
+interface HourRain {
+  inches: number;
+  estimated: boolean; // partly spread over a gap in the readings
+}
 
-  const rain = new Map<number, number>();
-  let previous: RainRow | undefined;
-  for (const [hourEnd, readings] of [...byHour].sort(([a], [b]) => a - b)) {
-    const totals = [previous, ...readings].map((row) => row?.rain_daily_in ?? null);
-    const recent = previous && fromSqliteUtc(previous.observed_at).getTime() >= hourEnd - HOUR_MS - 15 * 60 * 1000;
-    if (hourEnd <= nowMs) {
-      if (recent && totals.every((t) => t !== null)) {
-        let amount = 0;
-        for (let i = 1; i < totals.length; i++) {
-          const [before, after] = [totals[i - 1] as number, totals[i] as number];
-          amount += after >= before ? after - before : after;
-        }
-        rain.set(hourEnd, amount);
-      } else {
-        const rates = readings.map((row) => row.rain_hourly_in).filter((r) => r !== null);
-        // At least half the hour's 12 readings, so a gap doesn't pass for a dry hour.
-        if (rates.length >= 6) {
-          rain.set(hourEnd, mean(rates) ?? 0);
-        }
+// Rain in each complete hour through nowMs, keyed by the hour's end. From the
+// day's running total, reading to reading (it resets at local midnight), else from
+// the average rain rate over the hour's readings, the only option for readings
+// before 2026-10-20. When the station was offline (a power or internet outage) for
+// up to MAX_FILL_MS, the rise in the total across the gap is spread evenly over it,
+// and those hours are marked estimated. Across midnight only the rain since then is
+// known, so the part of the gap before midnight stays empty.
+function hourlyStationRain(rows: RainRow[], nowMs: number): Map<number, HourRain> {
+  const hours = new Map<number, { inches: number; coveredMs: number; estimated: boolean }>();
+  const add = (hourEnd: number, inches: number, ms: number, estimated: boolean) => {
+    const hour = hours.get(hourEnd) ?? { inches: 0, coveredMs: 0, estimated: false };
+    hours.set(hourEnd, {
+      inches: hour.inches + inches,
+      coveredMs: hour.coveredMs + ms,
+      estimated: hour.estimated || estimated,
+    });
+  };
+  const spread = (from: number, to: number, inches: number) => {
+    for (let start = from; start < to;) {
+      const hourEnd = Math.floor(start / HOUR_MS) * HOUR_MS + HOUR_MS;
+      const end = Math.min(hourEnd, to);
+      add(hourEnd, (inches * (end - start)) / (to - from), end - start, true);
+      start = end;
+    }
+  };
+
+  const readings = rows.map((row) => ({
+    ms: fromSqliteUtc(row.observed_at).getTime(),
+    total: row.rain_daily_in,
+    rate: row.rain_hourly_in,
+  }));
+  const rates = new Map<number, number[]>();
+  for (const [i, after] of readings.entries()) {
+    const hourEnd = Math.ceil(after.ms / HOUR_MS) * HOUR_MS;
+    if (after.rate !== null) {
+      rates.set(hourEnd, [...(rates.get(hourEnd) ?? []), after.rate]);
+    }
+    const before = readings[i - 1];
+    if (!before || before.total === null || after.total === null) {
+      continue;
+    }
+    const gapMs = after.ms - before.ms;
+    if (gapMs <= READING_GAP_MS) {
+      add(hourEnd, after.total >= before.total ? after.total - before.total : after.total, gapMs, false);
+    } else if (gapMs <= MAX_FILL_MS) {
+      const midnight = pacificDayStart(after.ms - 1);
+      if (midnight > before.ms) {
+        spread(midnight, after.ms, after.total);
+      } else if (after.total >= before.total) {
+        spread(before.ms, after.ms, after.total - before.total);
       }
     }
-    previous = readings[readings.length - 1];
   }
-  return rain;
+
+  const rain = new Map<number, HourRain>();
+  for (const hourEnd of new Set([...hours.keys(), ...rates.keys()])) {
+    if (hourEnd > nowMs) {
+      continue;
+    }
+    const hour = hours.get(hourEnd);
+    const hourRates = rates.get(hourEnd) ?? [];
+    if (hour && hour.coveredMs >= HOUR_MS - READING_GAP_MS) {
+      rain.set(hourEnd, { inches: hour.inches, estimated: hour.estimated });
+    } else if (hourRates.length >= 6) {
+      // At least half the hour's 12 readings, so a gap doesn't pass for a dry hour.
+      rain.set(hourEnd, { inches: mean(hourRates) ?? 0, estimated: false });
+    }
+  }
+  return new Map([...rain].sort(([a], [b]) => a - b));
 }
 
 function formatInches(value: number): string {
@@ -581,10 +628,9 @@ export function getForecastComparison(
     WHERE observed_at >= (SELECT COALESCE(MAX(observed_at), ?) FROM station_readings WHERE observed_at < ?)
     ORDER BY observed_at
   `).all(start, start) as RainRow[];
-  const stationRain = new Map(
-    [...hourlyStationRain(rainRows, now.getTime())].filter(([hourEnd]) => hourEnd > startMs)
-  );
-  const rainPoints = [...stationRain].map(([hourEnd, y]) => ({ x: midHourIso(hourEnd), y }));
+  const hourRain = [...hourlyStationRain(rainRows, now.getTime())].filter(([hourEnd]) => hourEnd > startMs);
+  const stationRain = new Map(hourRain.map(([hourEnd, { inches }]) => [hourEnd, inches]));
+  const rainPoints = hourRain.map(([hourEnd, { inches, estimated }]) => ({ x: midHourIso(hourEnd), y: inches, estimated }));
   const chances = lines.flatMap((line) => line.rainChance.map((p) => p.y)).filter((y) => y !== null);
   const maxChancePct = chances.length ? Math.max(...chances) : null;
   const anyAmount = [...rainPoints, ...lines.flatMap((line) => line.rain)].some((p) => p.y !== null && p.y >= WET_IN);
